@@ -1,64 +1,45 @@
 import React from 'react';
-import { Switch, Route } from 'react-router-dom';
+import { Navigate, Routes, Route } from 'react-router-dom';
 import {
+  RouteParams,
+  clusterConnectConnectorRelativePath,
+  clusterConnectConnectorsRelativePath,
+  clusterConnectorNewRelativePath,
+  getNonExactPath,
   clusterConnectorsPath,
-  clusterConnectorNewPath,
-  clusterConnectConnectorPath,
-  clusterConnectConnectorEditPath,
 } from 'lib/paths';
+import useAppParams from 'lib/hooks/useAppParams';
+import SuspenseQueryComponent from 'components/common/SuspenseQueryComponent/SuspenseQueryComponent';
 
-import Breadcrumbs from './Breadcrumbs/Breadcrumbs';
-import ListContainer from './List/ListContainer';
-import NewContainer from './New/NewContainer';
-import DetailsContainer from './Details/DetailsContainer';
-import EditContainer from './Edit/EditContainer';
+import ListPage from './List/ListPage';
+import New from './New/New';
+import DetailsPage from './Details/DetailsPage';
 
-const Connect: React.FC = () => (
-  <div className="section">
-    <Switch>
+const Connect: React.FC = () => {
+  const { clusterName } = useAppParams();
+
+  return (
+    <Routes>
+      <Route index element={<ListPage />} />
+      <Route path={clusterConnectorNewRelativePath} element={<New />} />
       <Route
-        path={clusterConnectConnectorPath(
-          ':clusterName',
-          ':connectName',
-          ':connectorName'
-        )}
-        component={Breadcrumbs}
+        path={getNonExactPath(clusterConnectConnectorRelativePath)}
+        element={
+          <SuspenseQueryComponent>
+            <DetailsPage />
+          </SuspenseQueryComponent>
+        }
       />
       <Route
-        path={clusterConnectorsPath(':clusterName')}
-        component={Breadcrumbs}
-      />
-    </Switch>
-    <Switch>
-      <Route
-        exact
-        path={clusterConnectorsPath(':clusterName')}
-        component={ListContainer}
+        path={clusterConnectConnectorsRelativePath}
+        element={<Navigate to={clusterConnectorsPath(clusterName)} replace />}
       />
       <Route
-        exact
-        path={clusterConnectorNewPath(':clusterName')}
-        component={NewContainer}
+        path={RouteParams.connectName}
+        element={<Navigate to="/" replace />}
       />
-      <Route
-        exact
-        path={clusterConnectConnectorEditPath(
-          ':clusterName',
-          ':connectName',
-          ':connectorName'
-        )}
-        component={EditContainer}
-      />
-      <Route
-        path={clusterConnectConnectorPath(
-          ':clusterName',
-          ':connectName',
-          ':connectorName'
-        )}
-        component={DetailsContainer}
-      />
-    </Switch>
-  </div>
-);
+    </Routes>
+  );
+};
 
 export default Connect;

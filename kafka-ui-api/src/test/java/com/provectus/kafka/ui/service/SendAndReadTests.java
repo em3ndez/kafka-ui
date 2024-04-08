@@ -1,17 +1,20 @@
 package com.provectus.kafka.ui.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.provectus.kafka.ui.AbstractBaseTest;
+import com.provectus.kafka.ui.AbstractIntegrationTest;
 import com.provectus.kafka.ui.model.ConsumerPosition;
-import com.provectus.kafka.ui.model.CreateTopicMessage;
-import com.provectus.kafka.ui.model.MessageFormat;
-import com.provectus.kafka.ui.model.SeekDirection;
-import com.provectus.kafka.ui.model.SeekType;
-import com.provectus.kafka.ui.model.TopicMessage;
-import com.provectus.kafka.ui.model.TopicMessageEvent;
+import com.provectus.kafka.ui.model.CreateTopicMessageDTO;
+import com.provectus.kafka.ui.model.KafkaCluster;
+import com.provectus.kafka.ui.model.SeekDirectionDTO;
+import com.provectus.kafka.ui.model.SeekTypeDTO;
+import com.provectus.kafka.ui.model.TopicMessageDTO;
+import com.provectus.kafka.ui.model.TopicMessageEventDTO;
+import com.provectus.kafka.ui.serdes.builtin.Int32Serde;
+import com.provectus.kafka.ui.serdes.builtin.Int64Serde;
+import com.provectus.kafka.ui.serdes.builtin.StringSerde;
+import com.provectus.kafka.ui.serdes.builtin.sr.SchemaRegistrySerde;
 import io.confluent.kafka.schemaregistry.ParsedSchema;
 import io.confluent.kafka.schemaregistry.avro.AvroSchema;
 import io.confluent.kafka.schemaregistry.json.JsonSchema;
@@ -24,12 +27,12 @@ import java.util.function.Consumer;
 import lombok.SneakyThrows;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.common.TopicPartition;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.ContextConfiguration;
+import reactor.test.StepVerifier;
 
-@ContextConfiguration(initializers = {AbstractBaseTest.Initializer.class})
-public class SendAndReadTests extends AbstractBaseTest {
+public class SendAndReadTests extends AbstractIntegrationTest {
 
   private static final AvroSchema AVRO_SCHEMA_1 = new AvroSchema(
       "{"
@@ -118,19 +121,28 @@ public class SendAndReadTests extends AbstractBaseTest {
   private static final String JSON_SCHEMA_RECORD
       = "{ \"f1\": 12, \"f2\": \"testJsonSchema1\", \"schema\": \"some txt\" }";
 
-  @Autowired
-  private ClusterService clusterService;
+  private KafkaCluster targetCluster;
 
   @Autowired
-  private ClustersMetricsScheduler clustersMetricsScheduler;
+  private MessagesService messagesService;
+
+  @Autowired
+  private ClustersStorage clustersStorage;
+
+  @BeforeEach
+  void init() {
+    targetCluster = clustersStorage.getClusterByName(LOCAL).get();
+  }
 
   @Test
   void noSchemaStringKeyStringValue() {
     new SendAndReadSpec()
         .withMsgToSend(
-            new CreateTopicMessage()
+            new CreateTopicMessageDTO()
                 .key("testKey")
+                .keySerde(StringSerde.name())
                 .content("testValue")
+                .valueSerde(StringSerde.name())
         )
         .doAssert(polled -> {
           assertThat(polled.getKey()).isEqualTo("testKey");
@@ -139,40 +151,30 @@ public class SendAndReadTests extends AbstractBaseTest {
   }
 
   @Test
-  void noSchemaJsonKeyJsonValue() {
+  void keyIsIntValueIsLong() {
     new SendAndReadSpec()
         .withMsgToSend(
-            new CreateTopicMessage()
-                .key("{ \"f1\": 111, \"f2\": \"testStr1\" }")
-                .content("{ \"f1\": 222, \"f2\": \"testStr2\" }")
-        )
-        .doAssert(polled -> {
-          assertThat(polled.getKey()).isEqualTo("{ \"f1\": 111, \"f2\": \"testStr1\" }");
-          assertThat(polled.getContent()).isEqualTo("{ \"f1\": 222, \"f2\": \"testStr2\" }");
-        });
-  }
-
-  @Test
-  void keyIsIntValueIsDoubleShouldBeSerializedAsStrings() {
-    new SendAndReadSpec()
-        .withMsgToSend(
-            new CreateTopicMessage()
+            new CreateTopicMessageDTO()
                 .key("123")
-                .content("234.56")
+                .keySerde(Int32Serde.name())
+                .content("21474836470")
+                .valueSerde(Int64Serde.name())
         )
         .doAssert(polled -> {
           assertThat(polled.getKey()).isEqualTo("123");
-          assertThat(polled.getContent()).isEqualTo("234.56");
+          assertThat(polled.getContent()).isEqualTo("21474836470");
         });
   }
 
   @Test
-  void noSchemaKeyIsNull() {
+  void keyIsNull() {
     new SendAndReadSpec()
         .withMsgToSend(
-            new CreateTopicMessage()
+            new CreateTopicMessageDTO()
                 .key(null)
+                .keySerde(StringSerde.name())
                 .content("testValue")
+                .valueSerde(StringSerde.name())
         )
         .doAssert(polled -> {
           assertThat(polled.getKey()).isNull();
@@ -181,12 +183,14 @@ public class SendAndReadTests extends AbstractBaseTest {
   }
 
   @Test
-  void noSchemaValueIsNull() {
+  void valueIsNull() {
     new SendAndReadSpec()
         .withMsgToSend(
-            new CreateTopicMessage()
+            new CreateTopicMessageDTO()
                 .key("testKey")
+                .keySerde(StringSerde.name())
                 .content(null)
+                .valueSerde(StringSerde.name())
         )
         .doAssert(polled -> {
           assertThat(polled.getKey()).isEqualTo("testKey");
@@ -200,9 +204,11 @@ public class SendAndReadTests extends AbstractBaseTest {
         .withKeySchema(AVRO_SCHEMA_PRIMITIVE_STRING)
         .withValueSchema(AVRO_SCHEMA_PRIMITIVE_INT)
         .withMsgToSend(
-            new CreateTopicMessage()
+            new CreateTopicMessageDTO()
                 .key("\"some string\"")
+                .keySerde(SchemaRegistrySerde.name())
                 .content("123")
+                .valueSerde(SchemaRegistrySerde.name())
         )
         .doAssert(polled -> {
           assertThat(polled.getKey()).isEqualTo("\"some string\"");
@@ -211,14 +217,16 @@ public class SendAndReadTests extends AbstractBaseTest {
   }
 
   @Test
-  void nonNullableKvWithAvroSchema() {
+  void recordAvroSchema() {
     new SendAndReadSpec()
         .withKeySchema(AVRO_SCHEMA_1)
         .withValueSchema(AVRO_SCHEMA_2)
         .withMsgToSend(
-            new CreateTopicMessage()
+            new CreateTopicMessageDTO()
                 .key(AVRO_SCHEMA_1_JSON_RECORD)
+                .keySerde(SchemaRegistrySerde.name())
                 .content(AVRO_SCHEMA_2_JSON_RECORD)
+                .valueSerde(SchemaRegistrySerde.name())
         )
         .doAssert(polled -> {
           assertJsonEqual(polled.getKey(), AVRO_SCHEMA_1_JSON_RECORD);
@@ -227,43 +235,15 @@ public class SendAndReadTests extends AbstractBaseTest {
   }
 
   @Test
-  void keyWithNoSchemaValueWithAvroSchema() {
-    new SendAndReadSpec()
-        .withValueSchema(AVRO_SCHEMA_1)
-        .withMsgToSend(
-            new CreateTopicMessage()
-                .key("testKey")
-                .content(AVRO_SCHEMA_1_JSON_RECORD)
-        )
-        .doAssert(polled -> {
-          assertThat(polled.getKey()).isEqualTo("testKey");
-          assertJsonEqual(polled.getContent(), AVRO_SCHEMA_1_JSON_RECORD);
-        });
-  }
-
-  @Test
-  void keyWithAvroSchemaValueWithNoSchema() {
-    new SendAndReadSpec()
-        .withKeySchema(AVRO_SCHEMA_1)
-        .withMsgToSend(
-            new CreateTopicMessage()
-                .key(AVRO_SCHEMA_1_JSON_RECORD)
-                .content("testVal")
-        )
-        .doAssert(polled -> {
-          assertJsonEqual(polled.getKey(), AVRO_SCHEMA_1_JSON_RECORD);
-          assertThat(polled.getContent()).isEqualTo("testVal");
-        });
-  }
-
-  @Test
   void keyWithNoSchemaValueWithProtoSchema() {
     new SendAndReadSpec()
         .withValueSchema(PROTOBUF_SCHEMA)
         .withMsgToSend(
-            new CreateTopicMessage()
+            new CreateTopicMessageDTO()
                 .key("testKey")
+                .keySerde(StringSerde.name())
                 .content(PROTOBUF_SCHEMA_JSON_RECORD)
+                .valueSerde(SchemaRegistrySerde.name())
         )
         .doAssert(polled -> {
           assertThat(polled.getKey()).isEqualTo("testKey");
@@ -277,9 +257,12 @@ public class SendAndReadTests extends AbstractBaseTest {
         .withKeySchema(AVRO_SCHEMA_1)
         .withValueSchema(AVRO_SCHEMA_2)
         .withMsgToSend(
-            new CreateTopicMessage()
+            new CreateTopicMessageDTO()
                 .key(null)
+                .keySerde(SchemaRegistrySerde.name())
                 .content(AVRO_SCHEMA_2_JSON_RECORD)
+                .valueSerde(SchemaRegistrySerde.name())
+
         )
         .doAssert(polled -> {
           assertThat(polled.getKey()).isNull();
@@ -288,31 +271,17 @@ public class SendAndReadTests extends AbstractBaseTest {
   }
 
   @Test
-  void valueWithAvroSchemaShouldThrowExceptionArgIsNotValidJsonObject() {
+  void valueWithAvroSchemaShouldThrowExceptionIfArgIsNotValidJsonObject() {
     new SendAndReadSpec()
         .withValueSchema(AVRO_SCHEMA_2)
         .withMsgToSend(
-            new CreateTopicMessage()
-                // f2 has type object instead of string
-                .content("{ \"f1\": 111, \"f2\": {} }")
+            new CreateTopicMessageDTO()
+                .keySerde(StringSerde.name())
+                // f2 has type int instead of string
+                .content("{ \"f1\": 111, \"f2\": 123 }")
+                .valueSerde(SchemaRegistrySerde.name())
         )
         .assertSendThrowsException();
-  }
-
-  @Test
-  void keyWithAvroSchemaValueWithAvroSchemaValueIsNull() {
-    new SendAndReadSpec()
-        .withKeySchema(AVRO_SCHEMA_1)
-        .withValueSchema(AVRO_SCHEMA_2)
-        .withMsgToSend(
-            new CreateTopicMessage()
-                .key(AVRO_SCHEMA_1_JSON_RECORD)
-                .content(null)
-        )
-        .doAssert(polled -> {
-          assertJsonEqual(polled.getKey(), AVRO_SCHEMA_1_JSON_RECORD);
-          assertThat(polled.getContent()).isNull();
-        });
   }
 
   @Test
@@ -321,9 +290,11 @@ public class SendAndReadTests extends AbstractBaseTest {
         .withKeySchema(AVRO_SCHEMA_1)
         .withValueSchema(PROTOBUF_SCHEMA)
         .withMsgToSend(
-            new CreateTopicMessage()
+            new CreateTopicMessageDTO()
                 .key(AVRO_SCHEMA_1_JSON_RECORD)
+                .keySerde(SchemaRegistrySerde.name())
                 .content(PROTOBUF_SCHEMA_JSON_RECORD)
+                .valueSerde(SchemaRegistrySerde.name())
         )
         .doAssert(polled -> {
           assertJsonEqual(polled.getKey(), AVRO_SCHEMA_1_JSON_RECORD);
@@ -336,9 +307,13 @@ public class SendAndReadTests extends AbstractBaseTest {
     new SendAndReadSpec()
         .withValueSchema(PROTOBUF_SCHEMA)
         .withMsgToSend(
-            new CreateTopicMessage()
+            new CreateTopicMessageDTO()
+                .key(null)
+                .keySerde(StringSerde.name())
                 // f2 field has type object instead of int
-                .content("{ \"f1\" : \"test str\", \"f2\" : {} }"))
+                .content("{ \"f1\" : \"test str\", \"f2\" : {} }")
+                .valueSerde(SchemaRegistrySerde.name())
+        )
         .assertSendThrowsException();
   }
 
@@ -348,9 +323,11 @@ public class SendAndReadTests extends AbstractBaseTest {
         .withKeySchema(PROTOBUF_SCHEMA)
         .withValueSchema(JSON_SCHEMA)
         .withMsgToSend(
-            new CreateTopicMessage()
+            new CreateTopicMessageDTO()
                 .key(PROTOBUF_SCHEMA_JSON_RECORD)
+                .keySerde(SchemaRegistrySerde.name())
                 .content(JSON_SCHEMA_RECORD)
+                .valueSerde(SchemaRegistrySerde.name())
         )
         .doAssert(polled -> {
           assertJsonEqual(polled.getKey(), PROTOBUF_SCHEMA_JSON_RECORD);
@@ -359,28 +336,16 @@ public class SendAndReadTests extends AbstractBaseTest {
   }
 
   @Test
-  void keyWithJsonValueWithJsonSchemaKeyValueIsNull() {
-    new SendAndReadSpec()
-        .withKeySchema(JSON_SCHEMA)
-        .withValueSchema(JSON_SCHEMA)
-        .withMsgToSend(
-            new CreateTopicMessage()
-                .key(JSON_SCHEMA_RECORD)
-        )
-        .doAssert(polled -> {
-          assertJsonEqual(polled.getKey(), JSON_SCHEMA_RECORD);
-          assertThat(polled.getContent()).isNull();
-        });
-  }
-
-  @Test
   void valueWithJsonSchemaThrowsExceptionIfArgIsNotValidJsonObject() {
     new SendAndReadSpec()
         .withValueSchema(JSON_SCHEMA)
         .withMsgToSend(
-            new CreateTopicMessage()
+            new CreateTopicMessageDTO()
+                .key(null)
+                .keySerde(StringSerde.name())
                 // 'f2' field has has type object instead of string
                 .content("{ \"f1\": 12, \"f2\": {}, \"schema\": \"some txt\" }")
+                .valueSerde(SchemaRegistrySerde.name())
         )
         .assertSendThrowsException();
   }
@@ -391,19 +356,22 @@ public class SendAndReadTests extends AbstractBaseTest {
         .withKeySchema(AVRO_SCHEMA_1)
         .withValueSchema(AVRO_SCHEMA_2)
         .withMsgToSend(
-            new CreateTopicMessage()
+            new CreateTopicMessageDTO()
                 .key(AVRO_SCHEMA_1_JSON_RECORD)
+                .keySerde(SchemaRegistrySerde.name())
                 .content(AVRO_SCHEMA_2_JSON_RECORD)
+                .valueSerde(SchemaRegistrySerde.name())
         )
         .doAssert(polled -> {
           assertJsonEqual(polled.getKey(), AVRO_SCHEMA_1_JSON_RECORD);
           assertJsonEqual(polled.getContent(), AVRO_SCHEMA_2_JSON_RECORD);
           assertThat(polled.getKeySize()).isEqualTo(15L);
           assertThat(polled.getValueSize()).isEqualTo(15L);
-          assertThat(polled.getKeyFormat()).isEqualTo(MessageFormat.AVRO);
-          assertThat(polled.getValueFormat()).isEqualTo(MessageFormat.AVRO);
-          assertThat(polled.getKeySchemaId()).isNotEmpty();
-          assertThat(polled.getValueSchemaId()).isNotEmpty();
+          assertThat(polled.getKeyDeserializeProperties().get("schemaId")).isNotNull();
+          assertThat(polled.getValueDeserializeProperties().get("schemaId")).isNotNull();
+          assertThat(polled.getKeyDeserializeProperties().get("type")).isEqualTo("AVRO");
+          assertThat(polled.getValueDeserializeProperties().get("schemaId")).isNotNull();
+          assertThat(polled.getValueDeserializeProperties().get("type")).isEqualTo("AVRO");
         });
   }
 
@@ -413,19 +381,21 @@ public class SendAndReadTests extends AbstractBaseTest {
         .withKeySchema(PROTOBUF_SCHEMA)
         .withValueSchema(PROTOBUF_SCHEMA)
         .withMsgToSend(
-            new CreateTopicMessage()
+            new CreateTopicMessageDTO()
                 .key(PROTOBUF_SCHEMA_JSON_RECORD)
+                .keySerde(SchemaRegistrySerde.name())
                 .content(PROTOBUF_SCHEMA_JSON_RECORD)
+                .valueSerde(SchemaRegistrySerde.name())
         )
         .doAssert(polled -> {
           assertJsonEqual(polled.getKey(), PROTOBUF_SCHEMA_JSON_RECORD);
           assertJsonEqual(polled.getContent(), PROTOBUF_SCHEMA_JSON_RECORD);
           assertThat(polled.getKeySize()).isEqualTo(18L);
           assertThat(polled.getValueSize()).isEqualTo(18L);
-          assertThat(polled.getKeyFormat()).isEqualTo(MessageFormat.PROTOBUF);
-          assertThat(polled.getValueFormat()).isEqualTo(MessageFormat.PROTOBUF);
-          assertThat(polled.getKeySchemaId()).isNotEmpty();
-          assertThat(polled.getValueSchemaId()).isNotEmpty();
+          assertThat(polled.getValueDeserializeProperties().get("schemaId")).isNotNull();
+          assertThat(polled.getKeyDeserializeProperties().get("type")).isEqualTo("PROTOBUF");
+          assertThat(polled.getValueDeserializeProperties().get("schemaId")).isNotNull();
+          assertThat(polled.getValueDeserializeProperties().get("type")).isEqualTo("PROTOBUF");
         });
   }
 
@@ -435,21 +405,39 @@ public class SendAndReadTests extends AbstractBaseTest {
         .withKeySchema(JSON_SCHEMA)
         .withValueSchema(JSON_SCHEMA)
         .withMsgToSend(
-            new CreateTopicMessage()
+            new CreateTopicMessageDTO()
                 .key(JSON_SCHEMA_RECORD)
+                .keySerde(SchemaRegistrySerde.name())
                 .content(JSON_SCHEMA_RECORD)
+                .valueSerde(SchemaRegistrySerde.name())
                 .headers(Map.of("header1", "value1"))
         )
         .doAssert(polled -> {
           assertJsonEqual(polled.getKey(), JSON_SCHEMA_RECORD);
           assertJsonEqual(polled.getContent(), JSON_SCHEMA_RECORD);
-          assertThat(polled.getKeyFormat()).isEqualTo(MessageFormat.JSON);
-          assertThat(polled.getValueFormat()).isEqualTo(MessageFormat.JSON);
-          assertThat(polled.getKeySchemaId()).isNotEmpty();
-          assertThat(polled.getValueSchemaId()).isNotEmpty();
           assertThat(polled.getKeySize()).isEqualTo(57L);
           assertThat(polled.getValueSize()).isEqualTo(57L);
           assertThat(polled.getHeadersSize()).isEqualTo(13L);
+          assertThat(polled.getValueDeserializeProperties().get("schemaId")).isNotNull();
+          assertThat(polled.getKeyDeserializeProperties().get("type")).isEqualTo("JSON");
+          assertThat(polled.getValueDeserializeProperties().get("schemaId")).isNotNull();
+          assertThat(polled.getValueDeserializeProperties().get("type")).isEqualTo("JSON");
+        });
+  }
+
+  @Test
+  void noKeyAndNoContentPresentTest() {
+    new SendAndReadSpec()
+        .withMsgToSend(
+            new CreateTopicMessageDTO()
+                .key(null)
+                .keySerde(StringSerde.name()) // any serde
+                .content(null)
+                .valueSerde(StringSerde.name()) // any serde
+        )
+        .doAssert(polled -> {
+          assertThat(polled.getKey()).isNull();
+          assertThat(polled.getContent()).isNull();
         });
   }
 
@@ -460,11 +448,11 @@ public class SendAndReadTests extends AbstractBaseTest {
   }
 
   class SendAndReadSpec {
-    CreateTopicMessage msgToSend;
+    CreateTopicMessageDTO msgToSend;
     ParsedSchema keySchema;
     ParsedSchema valueSchema;
 
-    public SendAndReadSpec withMsgToSend(CreateTopicMessage msg) {
+    public SendAndReadSpec withMsgToSend(CreateTopicMessageDTO msg) {
       this.msgToSend = msg;
       return this;
     }
@@ -490,39 +478,41 @@ public class SendAndReadTests extends AbstractBaseTest {
       if (valueSchema != null) {
         schemaRegistry.schemaRegistryClient().register(topic + "-value", valueSchema);
       }
-
-      // need to update to see new topic & schemas
-      clustersMetricsScheduler.updateMetrics();
-
       return topic;
     }
 
     public void assertSendThrowsException() {
       String topic = createTopicAndCreateSchemas();
       try {
-        assertThatThrownBy(() -> clusterService.sendMessage(LOCAL, topic, msgToSend).block());
+        StepVerifier.create(
+            messagesService.sendMessage(targetCluster, topic, msgToSend)
+        ).expectError().verify();
       } finally {
         deleteTopic(topic);
       }
     }
 
     @SneakyThrows
-    public void doAssert(Consumer<TopicMessage> msgAssert) {
+    public void doAssert(Consumer<TopicMessageDTO> msgAssert) {
       String topic = createTopicAndCreateSchemas();
       try {
-        clusterService.sendMessage(LOCAL, topic, msgToSend).block();
-        TopicMessage polled = clusterService.getMessages(
-            LOCAL,
-            topic,
-            new ConsumerPosition(
-                SeekType.BEGINNING,
-                Map.of(new TopicPartition(topic, 0), 0L),
-                SeekDirection.FORWARD
-            ),
-            null,
-            1
-        ).filter(e -> e.getType().equals(TopicMessageEvent.TypeEnum.MESSAGE))
-            .map(TopicMessageEvent::getMessage)
+        messagesService.sendMessage(targetCluster, topic, msgToSend).block();
+        TopicMessageDTO polled = messagesService.loadMessages(
+                targetCluster,
+                topic,
+                new ConsumerPosition(
+                    SeekTypeDTO.BEGINNING,
+                    topic,
+                    Map.of(new TopicPartition(topic, 0), 0L)
+                ),
+                null,
+                null,
+                1,
+                SeekDirectionDTO.FORWARD,
+                msgToSend.getKeySerde().get(),
+                msgToSend.getValueSerde().get()
+            ).filter(e -> e.getType().equals(TopicMessageEventDTO.TypeEnum.MESSAGE))
+            .map(TopicMessageEventDTO::getMessage)
             .blockLast(Duration.ofSeconds(5000));
 
         assertThat(polled).isNotNull();

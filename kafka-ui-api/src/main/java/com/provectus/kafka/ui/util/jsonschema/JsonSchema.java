@@ -23,8 +23,10 @@ public class JsonSchema {
   private final Map<String, FieldSchema> properties;
   private final Map<String, FieldSchema> definitions;
   private final List<String> required;
+  private final String rootRef;
 
-  public String toJson(ObjectMapper mapper) {
+  public String toJson() {
+    final ObjectMapper mapper = new ObjectMapper();
     final ObjectNode objectNode = mapper.createObjectNode();
     objectNode.set("$id", new TextNode(id.toString()));
     objectNode.set("$schema", new TextNode(schema.toString()));
@@ -51,6 +53,9 @@ public class JsonSchema {
                   Tuple2::getT2
               ))
       ));
+    }
+    if (rootRef != null) {
+      objectNode.set("$ref", new TextNode(rootRef));
     }
     return objectNode.toString();
   }

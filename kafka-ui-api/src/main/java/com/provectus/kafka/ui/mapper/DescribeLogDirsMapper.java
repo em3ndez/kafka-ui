@@ -1,61 +1,62 @@
 package com.provectus.kafka.ui.mapper;
 
-import com.provectus.kafka.ui.model.BrokerTopicLogdirs;
-import com.provectus.kafka.ui.model.BrokerTopicPartitionLogdir;
-import com.provectus.kafka.ui.model.BrokersLogdirs;
+import com.provectus.kafka.ui.model.BrokerTopicLogdirsDTO;
+import com.provectus.kafka.ui.model.BrokerTopicPartitionLogdirDTO;
+import com.provectus.kafka.ui.model.BrokersLogdirsDTO;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.DescribeLogDirsResponse;
 import org.springframework.stereotype.Component;
 
 @Component
 public class DescribeLogDirsMapper {
 
-  public List<BrokersLogdirs> toBrokerLogDirsList(
+  public List<BrokersLogdirsDTO> toBrokerLogDirsList(
       Map<Integer, Map<String, DescribeLogDirsResponse.LogDirInfo>> logDirsInfo) {
 
     return logDirsInfo.entrySet().stream().map(
         mapEntry -> mapEntry.getValue().entrySet().stream()
             .map(e -> toBrokerLogDirs(mapEntry.getKey(), e.getKey(), e.getValue()))
-            .collect(Collectors.toList())
+            .toList()
     ).flatMap(Collection::stream).collect(Collectors.toList());
   }
 
-  private BrokersLogdirs toBrokerLogDirs(Integer broker, String dirName,
-                                         DescribeLogDirsResponse.LogDirInfo logDirInfo) {
-    BrokersLogdirs result = new BrokersLogdirs();
+  private BrokersLogdirsDTO toBrokerLogDirs(Integer broker, String dirName,
+                                            DescribeLogDirsResponse.LogDirInfo logDirInfo) {
+    BrokersLogdirsDTO result = new BrokersLogdirsDTO();
     result.setName(dirName);
-    if (logDirInfo.error != null) {
+    if (logDirInfo.error != null && logDirInfo.error != Errors.NONE) {
       result.setError(logDirInfo.error.message());
     }
     var topics = logDirInfo.replicaInfos.entrySet().stream()
         .collect(Collectors.groupingBy(e -> e.getKey().topic())).entrySet().stream()
         .map(e -> toTopicLogDirs(broker, e.getKey(), e.getValue()))
-        .collect(Collectors.toList());
+        .toList();
     result.setTopics(topics);
     return result;
   }
 
-  private BrokerTopicLogdirs toTopicLogDirs(Integer broker, String name,
-                                            List<Map.Entry<TopicPartition,
-                                            DescribeLogDirsResponse.ReplicaInfo>> partitions) {
-    BrokerTopicLogdirs topic = new BrokerTopicLogdirs();
+  private BrokerTopicLogdirsDTO toTopicLogDirs(Integer broker, String name,
+                                               List<Map.Entry<TopicPartition,
+                                                   DescribeLogDirsResponse.ReplicaInfo>> partitions) {
+    BrokerTopicLogdirsDTO topic = new BrokerTopicLogdirsDTO();
     topic.setName(name);
     topic.setPartitions(
         partitions.stream().map(
             e -> topicPartitionLogDir(
-                broker, e.getKey().partition(), e.getValue())).collect(Collectors.toList())
+                broker, e.getKey().partition(), e.getValue())).toList()
     );
     return topic;
   }
 
-  private BrokerTopicPartitionLogdir topicPartitionLogDir(Integer broker, Integer partition,
-                                                          DescribeLogDirsResponse.ReplicaInfo
-                                                              replicaInfo) {
-    BrokerTopicPartitionLogdir logDir = new BrokerTopicPartitionLogdir();
+  private BrokerTopicPartitionLogdirDTO topicPartitionLogDir(Integer broker, Integer partition,
+                                                             DescribeLogDirsResponse.ReplicaInfo
+                                                                 replicaInfo) {
+    BrokerTopicPartitionLogdirDTO logDir = new BrokerTopicPartitionLogdirDTO();
     logDir.setBroker(broker);
     logDir.setPartition(partition);
     logDir.setSize(replicaInfo.size);

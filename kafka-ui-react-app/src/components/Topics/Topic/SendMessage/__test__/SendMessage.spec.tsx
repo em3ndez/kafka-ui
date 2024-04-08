@@ -1,9 +1,16 @@
 import React from 'react';
-import SendMessage, {
-  Props,
-} from 'components/Topics/Topic/SendMessage/SendMessage';
-import { MessageSchemaSourceEnum } from 'generated-sources';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import SendMessage from 'components/Topics/Topic/SendMessage/SendMessage';
+import { screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { render, WithRoute } from 'lib/testHelpers';
+import { clusterTopicPath } from 'lib/paths';
+import { validateBySchema } from 'components/Topics/Topic/SendMessage/utils';
+import { externalTopicPayload } from 'lib/fixtures/topics';
+import { useSendMessage, useTopicDetails } from 'lib/hooks/api/topics';
+import { useSerdes } from 'lib/hooks/api/topicMessages';
+import { serdesPayload } from 'lib/fixtures/topicMessages';
+
+import Mock = jest.Mock;
 
 jest.mock('json-schema-faker', () => ({
   generate: () => ({
@@ -14,121 +21,90 @@ jest.mock('json-schema-faker', () => ({
   option: jest.fn(),
 }));
 
-const setupWrapper = (props?: Partial<Props>) => (
-  <SendMessage
-    clusterName="testCluster"
-    topicName="testTopic"
-    fetchTopicMessageSchema={jest.fn()}
-    sendTopicMessage={jest.fn()}
-    messageSchema={{
-      key: {
-        name: 'key',
-        source: MessageSchemaSourceEnum.SCHEMA_REGISTRY,
-        schema: `{
-          "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "$id": "http://example.com/myURI.schema.json",
-          "title": "TestRecord",
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "f1": {
-              "type": "integer"
-            },
-            "f2": {
-              "type": "string"
-            },
-            "schema": {
-              "type": "string"
-            }
-          }
-        }
-        `,
-      },
-      value: {
-        name: 'value',
-        source: MessageSchemaSourceEnum.SCHEMA_REGISTRY,
-        schema: `{
-          "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "$id": "http://example.com/myURI1.schema.json",
-          "title": "TestRecord",
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "f1": {
-              "type": "integer"
-            },
-            "f2": {
-              "type": "string"
-            },
-            "schema": {
-              "type": "string"
-            }
-          }
-        }
-        `,
-      },
-    }}
-    schemaIsFetched={false}
-    messageIsSending={false}
-    partitions={[
-      {
-        partition: 0,
-        leader: 2,
-        replicas: [
-          {
-            broker: 2,
-            leader: false,
-            inSync: true,
-          },
-        ],
-        offsetMax: 0,
-        offsetMin: 0,
-      },
-      {
-        partition: 1,
-        leader: 1,
-        replicas: [
-          {
-            broker: 1,
-            leader: false,
-            inSync: true,
-          },
-        ],
-        offsetMax: 0,
-        offsetMin: 0,
-      },
-    ]}
-    {...props}
-  />
-);
+jest.mock('components/Topics/Topic/SendMessage/utils', () => ({
+  ...jest.requireActual('components/Topics/Topic/SendMessage/utils'),
+  validateBySchema: jest.fn(),
+}));
+
+jest.mock('lib/errorHandling', () => ({
+  ...jest.requireActual('lib/errorHandling'),
+  showServerError: jest.fn(),
+}));
+
+jest.mock('lib/hooks/api/topics', () => ({
+  useTopicDetails: jest.fn(),
+  useSendMessage: jest.fn(),
+}));
+
+jest.mock('lib/hooks/api/topicMessages', () => ({
+  useSerdes: jest.fn(),
+}));
+
+const clusterName = 'testCluster';
+const topicName = externalTopicPayload.name;
+
+const mockOnSubmit = jest.fn();
+
+const renderComponent = async () => {
+  const path = clusterTopicPath(clusterName, topicName);
+  await render(
+    <WithRoute path={clusterTopicPath()}>
+      <SendMessage closeSidebar={mockOnSubmit} />
+    </WithRoute>,
+    { initialEntries: [path] }
+  );
+};
+
+const renderAndSubmitData = async (error: string[] = []) => {
+  await renderComponent();
+  await userEvent.click(screen.getAllByRole('listbox')[0]);
+
+  await userEvent.click(screen.getAllByRole('option')[1]);
+
+  (validateBySchema as Mock).mockImplementation(() => error);
+  const submitButton = screen.getByRole('button', {
+    name: 'Produce Message',
+  });
+  await waitFor(() => expect(submitButton).toBeEnabled());
+  await userEvent.click(submitButton);
+};
 
 describe('SendMessage', () => {
-  it('calls fetchTopicMessageSchema on first render', () => {
-    const fetchTopicMessageSchemaMock = jest.fn();
-    render(
-      setupWrapper({ fetchTopicMessageSchema: fetchTopicMessageSchemaMock })
-    );
-    expect(fetchTopicMessageSchemaMock).toHaveBeenCalledTimes(1);
+  beforeEach(() => {
+    (useTopicDetails as jest.Mock).mockImplementation(() => ({
+      data: externalTopicPayload,
+    }));
+    (useSerdes as jest.Mock).mockImplementation(() => ({
+      data: serdesPayload,
+    }));
   });
 
   describe('when schema is fetched', () => {
     it('calls sendTopicMessage on submit', async () => {
-      jest.mock('../validateMessage', () => jest.fn().mockReturnValue(true));
-      const mockSendTopicMessage = jest.fn();
-      render(
-        setupWrapper({
-          schemaIsFetched: true,
-          sendTopicMessage: mockSendTopicMessage,
-        })
-      );
-      const select = await screen.findByLabelText('Partition');
-      fireEvent.change(select, {
-        target: { value: 2 },
-      });
-      await waitFor(async () => {
-        fireEvent.click(await screen.findByText('Send'));
-        expect(mockSendTopicMessage).toHaveBeenCalledTimes(1);
-      });
+      const sendTopicMessageMock = jest.fn();
+      (useSendMessage as jest.Mock).mockImplementation(() => ({
+        mutateAsync: sendTopicMessageMock,
+      }));
+      await renderAndSubmitData();
+      expect(sendTopicMessageMock).toHaveBeenCalledTimes(1);
+      expect(mockOnSubmit).toHaveBeenCalledTimes(1);
+    });
+
+    it('should check and view validation error message when is not valid', async () => {
+      const sendTopicMessageMock = jest.fn();
+      (useSendMessage as jest.Mock).mockImplementation(() => ({
+        mutateAsync: sendTopicMessageMock,
+      }));
+      await renderAndSubmitData(['error']);
+      expect(sendTopicMessageMock).not.toHaveBeenCalled();
+      expect(mockOnSubmit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('when schema is empty', () => {
+    it('renders if schema is not defined', async () => {
+      await renderComponent();
+      expect(screen.getAllByRole('textbox')[0].nodeValue).toBeNull();
     });
   });
 });

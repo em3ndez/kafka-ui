@@ -3,30 +3,28 @@ package com.provectus.kafka.ui;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.http.MediaType.TEXT_EVENT_STREAM;
 
-import com.provectus.kafka.ui.api.model.TopicConfig;
-import com.provectus.kafka.ui.model.BrokerConfig;
-import com.provectus.kafka.ui.model.PartitionsIncrease;
-import com.provectus.kafka.ui.model.PartitionsIncreaseResponse;
-import com.provectus.kafka.ui.model.TopicCreation;
-import com.provectus.kafka.ui.model.TopicDetails;
-import com.provectus.kafka.ui.model.TopicMessageEvent;
+import com.provectus.kafka.ui.model.BrokerConfigDTO;
+import com.provectus.kafka.ui.model.PartitionsIncreaseDTO;
+import com.provectus.kafka.ui.model.PartitionsIncreaseResponseDTO;
+import com.provectus.kafka.ui.model.TopicConfigDTO;
+import com.provectus.kafka.ui.model.TopicCreationDTO;
+import com.provectus.kafka.ui.model.TopicDetailsDTO;
+import com.provectus.kafka.ui.model.TopicMessageEventDTO;
 import com.provectus.kafka.ui.producer.KafkaTestProducer;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Stream;
-import lombok.extern.log4j.Log4j2;
+import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
-import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.web.reactive.server.WebTestClient;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
-@ContextConfiguration(initializers = {AbstractBaseTest.Initializer.class})
-@Log4j2
-@AutoConfigureWebTestClient(timeout = "60000")
-public class KafkaConsumerTests extends AbstractBaseTest {
+@Slf4j
+public class KafkaConsumerTests extends AbstractIntegrationTest {
 
   @Autowired
   private WebTestClient webTestClient;
@@ -37,7 +35,7 @@ public class KafkaConsumerTests extends AbstractBaseTest {
     var topicName = UUID.randomUUID().toString();
     webTestClient.post()
         .uri("/api/clusters/{clusterName}/topics", LOCAL)
-        .bodyValue(new TopicCreation()
+        .bodyValue(new TopicCreationDTO()
             .name(topicName)
             .partitions(1)
             .replicationFactor(1)
@@ -48,8 +46,13 @@ public class KafkaConsumerTests extends AbstractBaseTest {
         .isOk();
 
     try (KafkaTestProducer<String, String> producer = KafkaTestProducer.forKafka(kafka)) {
-      Stream.of("one", "two", "three", "four")
-          .forEach(value -> producer.send(topicName, value));
+      Flux.fromStream(
+          Stream.of("one", "two", "three", "four")
+              .map(value -> Mono.fromFuture(producer.send(topicName, value)))
+      ).blockLast();
+    } catch (Throwable e) {
+      log.error("Error on sending", e);
+      throw new RuntimeException(e);
     }
 
     long count = webTestClient.get()
@@ -58,11 +61,11 @@ public class KafkaConsumerTests extends AbstractBaseTest {
         .exchange()
         .expectStatus()
         .isOk()
-        .expectBodyList(TopicMessageEvent.class)
+        .expectBodyList(TopicMessageEventDTO.class)
         .returnResult()
         .getResponseBody()
         .stream()
-        .filter(e -> e.getType().equals(TopicMessageEvent.TypeEnum.MESSAGE))
+        .filter(e -> e.getType().equals(TopicMessageEventDTO.TypeEnum.MESSAGE))
         .count();
 
     assertThat(count).isEqualTo(4);
@@ -78,11 +81,11 @@ public class KafkaConsumerTests extends AbstractBaseTest {
         .exchange()
         .expectStatus()
         .isOk()
-        .expectBodyList(TopicMessageEvent.class)
+        .expectBodyList(TopicMessageEventDTO.class)
         .returnResult()
         .getResponseBody()
         .stream()
-        .filter(e -> e.getType().equals(TopicMessageEvent.TypeEnum.MESSAGE))
+        .filter(e -> e.getType().equals(TopicMessageEventDTO.TypeEnum.MESSAGE))
         .count();
 
     assertThat(count).isZero();
@@ -93,7 +96,7 @@ public class KafkaConsumerTests extends AbstractBaseTest {
     var topicName = UUID.randomUUID().toString();
     webTestClient.post()
         .uri("/api/clusters/{clusterName}/topics", LOCAL)
-        .bodyValue(new TopicCreation()
+        .bodyValue(new TopicCreationDTO()
             .name(topicName)
             .partitions(1)
             .replicationFactor(1)
@@ -103,31 +106,31 @@ public class KafkaConsumerTests extends AbstractBaseTest {
         .expectStatus()
         .isOk();
 
-    PartitionsIncreaseResponse response = webTestClient.patch()
+    PartitionsIncreaseResponseDTO response = webTestClient.patch()
         .uri("/api/clusters/{clusterName}/topics/{topicName}/partitions",
             LOCAL,
             topicName)
-        .bodyValue(new PartitionsIncrease()
+        .bodyValue(new PartitionsIncreaseDTO()
             .totalPartitionsCount(10)
         )
         .exchange()
         .expectStatus()
         .isOk()
-        .expectBody(PartitionsIncreaseResponse.class)
+        .expectBody(PartitionsIncreaseResponseDTO.class)
         .returnResult()
         .getResponseBody();
 
     assert response != null;
     Assertions.assertEquals(10, response.getTotalPartitionsCount());
 
-    TopicDetails topicDetails = webTestClient.get()
+    TopicDetailsDTO topicDetails = webTestClient.get()
         .uri("/api/clusters/{clusterName}/topics/{topicName}",
             LOCAL,
             topicName)
         .exchange()
         .expectStatus()
         .isOk()
-        .expectBody(TopicDetails.class)
+        .expectBody(TopicDetailsDTO.class)
         .returnResult()
         .getResponseBody();
 
@@ -156,14 +159,14 @@ public class KafkaConsumerTests extends AbstractBaseTest {
   public void shouldReturnConfigsForBroker() {
     var topicName = UUID.randomUUID().toString();
 
-    List<BrokerConfig> configs = webTestClient.get()
+    List<BrokerConfigDTO> configs = webTestClient.get()
         .uri("/api/clusters/{clusterName}/brokers/{id}/configs",
             LOCAL,
             1)
         .exchange()
         .expectStatus()
         .isOk()
-        .expectBodyList(BrokerConfig.class)
+        .expectBodyList(BrokerConfigDTO.class)
         .returnResult()
         .getResponseBody();
 
@@ -193,7 +196,7 @@ public class KafkaConsumerTests extends AbstractBaseTest {
 
     webTestClient.post()
             .uri("/api/clusters/{clusterName}/topics", LOCAL)
-            .bodyValue(new TopicCreation()
+            .bodyValue(new TopicCreationDTO()
                     .name(topicName)
                     .partitions(1)
                     .replicationFactor(1)
@@ -203,12 +206,12 @@ public class KafkaConsumerTests extends AbstractBaseTest {
             .expectStatus()
             .isOk();
 
-    List<TopicConfig> configs = webTestClient.get()
+    List<TopicConfigDTO> configs = webTestClient.get()
             .uri("/api/clusters/{clusterName}/topics/{topicName}/config", LOCAL, topicName)
             .exchange()
             .expectStatus()
             .isOk()
-            .expectBodyList(TopicConfig.class)
+            .expectBodyList(TopicConfigDTO.class)
             .returnResult()
             .getResponseBody();
 

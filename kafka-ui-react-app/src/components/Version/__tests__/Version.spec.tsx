@@ -1,29 +1,41 @@
 import React from 'react';
-import { mount } from 'enzyme';
+import { screen } from '@testing-library/dom';
 import Version from 'components/Version/Version';
+import { render } from 'lib/testHelpers';
+import { useLatestVersion } from 'lib/hooks/api/latestVersion';
+import {
+  deprecatedVersionPayload,
+  latestVersionPayload,
+} from 'lib/fixtures/latestVersion';
 
-const tag = 'v1.0.1-SHAPSHOT';
-const commit = '123sdf34';
+jest.mock('lib/hooks/api/latestVersion', () => ({
+  useLatestVersion: jest.fn(),
+}));
+describe('Version Component', () => {
+  const commitId = '96a577a';
 
-describe('Version', () => {
-  it('shows nothing if tag is not defined', () => {
-    const component = mount(<Version />);
-    expect(component.html()).toEqual(null);
+  describe('render latest version', () => {
+    beforeEach(() => {
+      (useLatestVersion as jest.Mock).mockImplementation(() => ({
+        data: latestVersionPayload,
+      }));
+    });
+    it('renders latest release version as current version', async () => {
+      render(<Version />);
+      expect(screen.getByText(commitId)).toBeInTheDocument();
+    });
+
+    it('should not show warning icon if it is last release', async () => {
+      render(<Version />);
+      expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    });
   });
 
-  it('shows current tag when only tag is defined', () => {
-    const component = mount(<Version tag={tag} />);
-    expect(component.text()).toContain(tag);
-  });
-
-  it('shows current tag and commit', () => {
-    const component = mount(<Version tag={tag} commit={commit} />);
-    expect(component.text()).toContain(tag);
-    expect(component.text()).toContain(commit);
-  });
-
-  it('matches snapshot', () => {
-    const component = mount(<Version tag={tag} commit={commit} />);
-    expect(component).toMatchSnapshot();
+  it('show warning icon if it is not last release', async () => {
+    (useLatestVersion as jest.Mock).mockImplementation(() => ({
+      data: deprecatedVersionPayload,
+    }));
+    render(<Version />);
+    expect(screen.getByRole('img')).toBeInTheDocument();
   });
 });

@@ -1,48 +1,54 @@
 package com.provectus.kafka.ui.service;
 
+import static com.provectus.kafka.ui.model.SeekTypeDTO.BEGINNING;
+import static com.provectus.kafka.ui.model.SeekTypeDTO.LATEST;
+import static com.provectus.kafka.ui.model.SeekTypeDTO.OFFSET;
+import static com.provectus.kafka.ui.model.SeekTypeDTO.TIMESTAMP;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.provectus.kafka.ui.AbstractBaseTest;
-import com.provectus.kafka.ui.emitter.BackwardRecordEmitter;
-import com.provectus.kafka.ui.emitter.ForwardRecordEmitter;
+import com.provectus.kafka.ui.AbstractIntegrationTest;
+import com.provectus.kafka.ui.emitter.BackwardEmitter;
+import com.provectus.kafka.ui.emitter.EnhancedConsumer;
+import com.provectus.kafka.ui.emitter.ForwardEmitter;
+import com.provectus.kafka.ui.emitter.PollingSettings;
+import com.provectus.kafka.ui.emitter.PollingThrottler;
 import com.provectus.kafka.ui.model.ConsumerPosition;
-import com.provectus.kafka.ui.model.SeekDirection;
-import com.provectus.kafka.ui.model.SeekType;
-import com.provectus.kafka.ui.model.TopicMessageEvent;
+import com.provectus.kafka.ui.model.TopicMessageDTO;
+import com.provectus.kafka.ui.model.TopicMessageEventDTO;
 import com.provectus.kafka.ui.producer.KafkaTestProducer;
-import com.provectus.kafka.ui.serde.SimpleRecordSerDe;
-import com.provectus.kafka.ui.util.OffsetsSeekBackward;
-import com.provectus.kafka.ui.util.OffsetsSeekForward;
+import com.provectus.kafka.ui.serde.api.Serde;
+import com.provectus.kafka.ui.serdes.ConsumerRecordDeserializer;
+import com.provectus.kafka.ui.serdes.PropertyResolverImpl;
+import com.provectus.kafka.ui.serdes.builtin.StringSerde;
+import com.provectus.kafka.ui.util.ApplicationMetrics;
 import java.io.Serializable;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import lombok.Value;
-import lombok.extern.log4j.Log4j2;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.header.internals.RecordHeader;
-import org.apache.kafka.common.serialization.BytesDeserializer;
-import org.apache.kafka.common.utils.Bytes;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.context.ContextConfiguration;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.FluxSink;
+import reactor.test.StepVerifier;
 
-@Log4j2
-@ContextConfiguration(initializers = {AbstractBaseTest.Initializer.class})
-class RecordEmitterTest extends AbstractBaseTest {
+@Slf4j
+class RecordEmitterTest extends AbstractIntegrationTest {
 
   static final int PARTITIONS = 5;
   static final int MSGS_PER_PARTITION = 100;
@@ -50,6 +56,8 @@ class RecordEmitterTest extends AbstractBaseTest {
   static final String TOPIC = RecordEmitterTest.class.getSimpleName() + "_" + UUID.randomUUID();
   static final String EMPTY_TOPIC = TOPIC + "_empty";
   static final List<Record> SENT_RECORDS = new ArrayList<>();
+  static final ConsumerRecordDeserializer RECORD_DESERIALIZER = createRecordsDeserializer();
+  static final Predicate<TopicMessageDTO> NOOP_FILTER = m -> true;
 
   @BeforeAll
   static void generateMsgs() throws Exception {
@@ -85,85 +93,81 @@ class RecordEmitterTest extends AbstractBaseTest {
   static void cleanup() {
     deleteTopic(TOPIC);
     deleteTopic(EMPTY_TOPIC);
+    SENT_RECORDS.clear();
+  }
+
+  private static ConsumerRecordDeserializer createRecordsDeserializer() {
+    Serde s = new StringSerde();
+    s.configure(PropertyResolverImpl.empty(), PropertyResolverImpl.empty(), PropertyResolverImpl.empty());
+    return new ConsumerRecordDeserializer(
+        StringSerde.name(),
+        s.deserializer(null, Serde.Target.KEY),
+        StringSerde.name(),
+        s.deserializer(null, Serde.Target.VALUE),
+        StringSerde.name(),
+        s.deserializer(null, Serde.Target.KEY),
+        s.deserializer(null, Serde.Target.VALUE),
+        msg -> msg
+    );
   }
 
   @Test
   void pollNothingOnEmptyTopic() {
-    var forwardEmitter = new ForwardRecordEmitter(
+    var forwardEmitter = new ForwardEmitter(
         this::createConsumer,
-        new OffsetsSeekForward(EMPTY_TOPIC,
-            new ConsumerPosition(SeekType.BEGINNING, Map.of(), SeekDirection.FORWARD)
-        ), new SimpleRecordSerDe()
+        new ConsumerPosition(BEGINNING, EMPTY_TOPIC, null),
+        100,
+        RECORD_DESERIALIZER,
+        NOOP_FILTER,
+        PollingSettings.createDefault()
     );
 
-    var backwardEmitter = new BackwardRecordEmitter(
+    var backwardEmitter = new BackwardEmitter(
         this::createConsumer,
-        new OffsetsSeekBackward(
-            EMPTY_TOPIC,
-            new ConsumerPosition(SeekType.BEGINNING, Map.of(), SeekDirection.BACKWARD),
-            100
-        ), new SimpleRecordSerDe()
+        new ConsumerPosition(BEGINNING, EMPTY_TOPIC, null),
+        100,
+        RECORD_DESERIALIZER,
+        NOOP_FILTER,
+        PollingSettings.createDefault()
     );
 
-    Long polledValues = Flux.create(forwardEmitter)
-        .filter(m -> m.getType().equals(TopicMessageEvent.TypeEnum.MESSAGE))
-        .limitRequest(100)
-        .count()
-        .block();
+    StepVerifier.create(Flux.create(forwardEmitter))
+        .expectNextMatches(m -> m.getType().equals(TopicMessageEventDTO.TypeEnum.PHASE))
+        .expectNextMatches(m -> m.getType().equals(TopicMessageEventDTO.TypeEnum.DONE))
+        .expectComplete()
+        .verify();
 
-    assertThat(polledValues).isZero();
-
-    polledValues = Flux.create(backwardEmitter)
-        .filter(m -> m.getType().equals(TopicMessageEvent.TypeEnum.MESSAGE))
-        .limitRequest(100)
-        .count()
-        .block();
-
-    assertThat(polledValues).isZero();
-
+    StepVerifier.create(Flux.create(backwardEmitter))
+        .expectNextMatches(m -> m.getType().equals(TopicMessageEventDTO.TypeEnum.PHASE))
+        .expectNextMatches(m -> m.getType().equals(TopicMessageEventDTO.TypeEnum.DONE))
+        .expectComplete()
+        .verify();
   }
 
   @Test
   void pollFullTopicFromBeginning() {
-    var forwardEmitter = new ForwardRecordEmitter(
+    var forwardEmitter = new ForwardEmitter(
         this::createConsumer,
-        new OffsetsSeekForward(TOPIC,
-            new ConsumerPosition(SeekType.BEGINNING, Map.of(), SeekDirection.FORWARD)
-        ), new SimpleRecordSerDe()
+        new ConsumerPosition(BEGINNING, TOPIC, null),
+        PARTITIONS * MSGS_PER_PARTITION,
+        RECORD_DESERIALIZER,
+        NOOP_FILTER,
+        PollingSettings.createDefault()
     );
 
-    var backwardEmitter = new BackwardRecordEmitter(
+    var backwardEmitter = new BackwardEmitter(
         this::createConsumer,
-        new OffsetsSeekBackward(TOPIC,
-            new ConsumerPosition(SeekType.BEGINNING, Map.of(), SeekDirection.FORWARD),
-            PARTITIONS * MSGS_PER_PARTITION
-        ), new SimpleRecordSerDe()
+        new ConsumerPosition(LATEST, TOPIC, null),
+        PARTITIONS * MSGS_PER_PARTITION,
+        RECORD_DESERIALIZER,
+        NOOP_FILTER,
+        PollingSettings.createDefault()
     );
 
-    var polledValues = Flux.create(forwardEmitter)
-        .filter(m -> m.getType().equals(TopicMessageEvent.TypeEnum.MESSAGE))
-        .limitRequest(Long.MAX_VALUE)
-        .filter(e -> e.getType().equals(TopicMessageEvent.TypeEnum.MESSAGE))
-        .map(TopicMessageEvent::getMessage)
-        .map(m -> m.getContent().toString())
-        .collect(Collectors.toList())
-        .block();
+    List<String> expectedValues = SENT_RECORDS.stream().map(Record::getValue).collect(Collectors.toList());
 
-    assertThat(polledValues).containsExactlyInAnyOrderElementsOf(
-        SENT_RECORDS.stream().map(Record::getValue).collect(Collectors.toList()));
-
-    polledValues = Flux.create(backwardEmitter)
-        .filter(m -> m.getType().equals(TopicMessageEvent.TypeEnum.MESSAGE))
-        .limitRequest(Long.MAX_VALUE)
-        .filter(e -> e.getType().equals(TopicMessageEvent.TypeEnum.MESSAGE))
-        .map(TopicMessageEvent::getMessage)
-        .map(m -> m.getContent().toString())
-        .collect(Collectors.toList())
-        .block();
-
-    assertThat(polledValues).containsExactlyInAnyOrderElementsOf(
-        SENT_RECORDS.stream().map(Record::getValue).collect(Collectors.toList()));
-
+    expectEmitter(forwardEmitter, expectedValues);
+    expectEmitter(backwardEmitter, expectedValues);
   }
 
   @Test
@@ -174,52 +178,37 @@ class RecordEmitterTest extends AbstractBaseTest {
       targetOffsets.put(new TopicPartition(TOPIC, i), offset);
     }
 
-    var forwardEmitter = new ForwardRecordEmitter(
+    var forwardEmitter = new ForwardEmitter(
         this::createConsumer,
-        new OffsetsSeekForward(TOPIC,
-            new ConsumerPosition(SeekType.OFFSET, targetOffsets, SeekDirection.FORWARD)
-        ), new SimpleRecordSerDe()
+        new ConsumerPosition(OFFSET, TOPIC, targetOffsets),
+        PARTITIONS * MSGS_PER_PARTITION,
+        RECORD_DESERIALIZER,
+        NOOP_FILTER,
+        PollingSettings.createDefault()
     );
 
-    var backwardEmitter = new BackwardRecordEmitter(
+    var backwardEmitter = new BackwardEmitter(
         this::createConsumer,
-        new OffsetsSeekBackward(TOPIC,
-            new ConsumerPosition(SeekType.OFFSET, targetOffsets, SeekDirection.BACKWARD),
-            PARTITIONS * MSGS_PER_PARTITION
-        ), new SimpleRecordSerDe()
+        new ConsumerPosition(OFFSET, TOPIC, targetOffsets),
+        PARTITIONS * MSGS_PER_PARTITION,
+        RECORD_DESERIALIZER,
+        NOOP_FILTER,
+        PollingSettings.createDefault()
     );
-
-    var polledValues = Flux.create(forwardEmitter)
-        .filter(m -> m.getType().equals(TopicMessageEvent.TypeEnum.MESSAGE))
-        .limitRequest(Long.MAX_VALUE)
-        .filter(e -> e.getType().equals(TopicMessageEvent.TypeEnum.MESSAGE))
-        .map(TopicMessageEvent::getMessage)
-        .map(m -> m.getContent().toString())
-        .collect(Collectors.toList())
-        .block();
 
     var expectedValues = SENT_RECORDS.stream()
         .filter(r -> r.getOffset() >= targetOffsets.get(r.getTp()))
         .map(Record::getValue)
         .collect(Collectors.toList());
 
-    assertThat(polledValues).containsExactlyInAnyOrderElementsOf(expectedValues);
+    expectEmitter(forwardEmitter, expectedValues);
 
     expectedValues = SENT_RECORDS.stream()
         .filter(r -> r.getOffset() < targetOffsets.get(r.getTp()))
         .map(Record::getValue)
         .collect(Collectors.toList());
 
-    polledValues =  Flux.create(backwardEmitter)
-        .filter(m -> m.getType().equals(TopicMessageEvent.TypeEnum.MESSAGE))
-        .limitRequest(Long.MAX_VALUE)
-        .filter(e -> e.getType().equals(TopicMessageEvent.TypeEnum.MESSAGE))
-        .map(TopicMessageEvent::getMessage)
-        .map(m -> m.getContent().toString())
-        .collect(Collectors.toList())
-        .block();
-
-    assertThat(polledValues).containsExactlyInAnyOrderElementsOf(expectedValues);
+    expectEmitter(backwardEmitter, expectedValues);
   }
 
   @Test
@@ -237,51 +226,37 @@ class RecordEmitterTest extends AbstractBaseTest {
       );
     }
 
-    var forwardEmitter = new ForwardRecordEmitter(
+    var forwardEmitter = new ForwardEmitter(
         this::createConsumer,
-        new OffsetsSeekForward(TOPIC,
-            new ConsumerPosition(SeekType.TIMESTAMP, targetTimestamps, SeekDirection.FORWARD)
-        ), new SimpleRecordSerDe()
+        new ConsumerPosition(TIMESTAMP, TOPIC, targetTimestamps),
+        PARTITIONS * MSGS_PER_PARTITION,
+        RECORD_DESERIALIZER,
+        NOOP_FILTER,
+        PollingSettings.createDefault()
     );
 
-    var backwardEmitter = new BackwardRecordEmitter(
+    var backwardEmitter = new BackwardEmitter(
         this::createConsumer,
-        new OffsetsSeekBackward(TOPIC,
-            new ConsumerPosition(SeekType.TIMESTAMP, targetTimestamps, SeekDirection.BACKWARD),
-            PARTITIONS * MSGS_PER_PARTITION
-        ), new SimpleRecordSerDe()
+        new ConsumerPosition(TIMESTAMP, TOPIC, targetTimestamps),
+        PARTITIONS * MSGS_PER_PARTITION,
+        RECORD_DESERIALIZER,
+        NOOP_FILTER,
+        PollingSettings.createDefault()
     );
-
-    var polledValues = Flux.create(forwardEmitter)
-        .filter(e -> e.getType().equals(TopicMessageEvent.TypeEnum.MESSAGE))
-        .map(TopicMessageEvent::getMessage)
-        .map(m -> m.getContent().toString())
-        .limitRequest(Long.MAX_VALUE)
-        .collect(Collectors.toList())
-        .block();
 
     var expectedValues = SENT_RECORDS.stream()
         .filter(r -> r.getTimestamp() >= targetTimestamps.get(r.getTp()))
         .map(Record::getValue)
         .collect(Collectors.toList());
 
-    assertThat(polledValues).containsExactlyInAnyOrderElementsOf(expectedValues);
-
-    polledValues = Flux.create(backwardEmitter)
-        .filter(e -> e.getType().equals(TopicMessageEvent.TypeEnum.MESSAGE))
-        .map(TopicMessageEvent::getMessage)
-        .map(m -> m.getContent().toString())
-        .limitRequest(Long.MAX_VALUE)
-        .collect(Collectors.toList())
-        .block();
+    expectEmitter(forwardEmitter, expectedValues);
 
     expectedValues = SENT_RECORDS.stream()
         .filter(r -> r.getTimestamp() < targetTimestamps.get(r.getTp()))
         .map(Record::getValue)
         .collect(Collectors.toList());
 
-    assertThat(polledValues).containsExactlyInAnyOrderElementsOf(expectedValues);
-
+    expectEmitter(backwardEmitter, expectedValues);
   }
 
   @Test
@@ -292,30 +267,24 @@ class RecordEmitterTest extends AbstractBaseTest {
       targetOffsets.put(new TopicPartition(TOPIC, i), (long) MSGS_PER_PARTITION);
     }
 
-    var backwardEmitter = new BackwardRecordEmitter(
+    var backwardEmitter = new BackwardEmitter(
         this::createConsumer,
-        new OffsetsSeekBackward(TOPIC,
-            new ConsumerPosition(SeekType.OFFSET, targetOffsets, SeekDirection.BACKWARD),
-            numMessages
-        ), new SimpleRecordSerDe()
+        new ConsumerPosition(OFFSET, TOPIC, targetOffsets),
+        numMessages,
+        RECORD_DESERIALIZER,
+        NOOP_FILTER,
+        PollingSettings.createDefault()
     );
-
-    var polledValues = Flux.create(backwardEmitter)
-        .filter(e -> e.getType().equals(TopicMessageEvent.TypeEnum.MESSAGE))
-        .map(TopicMessageEvent::getMessage)
-        .map(m -> m.getContent().toString())
-        .limitRequest(numMessages)
-        .collect(Collectors.toList())
-        .block();
 
     var expectedValues = SENT_RECORDS.stream()
         .filter(r -> r.getOffset() < targetOffsets.get(r.getTp()))
-        .filter(r -> r.getOffset() >= (targetOffsets.get(r.getTp()) - (100 / PARTITIONS)))
+        .filter(r -> r.getOffset() >= (targetOffsets.get(r.getTp()) - (numMessages / PARTITIONS)))
         .map(Record::getValue)
         .collect(Collectors.toList());
 
+    assertThat(expectedValues).size().isEqualTo(numMessages);
 
-    assertThat(polledValues).containsExactlyInAnyOrderElementsOf(expectedValues);
+    expectEmitter(backwardEmitter, expectedValues);
   }
 
   @Test
@@ -325,41 +294,65 @@ class RecordEmitterTest extends AbstractBaseTest {
       offsets.put(new TopicPartition(TOPIC, i), 0L);
     }
 
-    var backwardEmitter = new BackwardRecordEmitter(
+    var backwardEmitter = new BackwardEmitter(
         this::createConsumer,
-        new OffsetsSeekBackward(TOPIC,
-            new ConsumerPosition(SeekType.OFFSET, offsets, SeekDirection.BACKWARD),
-            100
-        ), new SimpleRecordSerDe()
+        new ConsumerPosition(OFFSET, TOPIC, offsets),
+        100,
+        RECORD_DESERIALIZER,
+        NOOP_FILTER,
+        PollingSettings.createDefault()
     );
 
-    var polledValues = Flux.create(backwardEmitter)
-        .filter(e -> e.getType().equals(TopicMessageEvent.TypeEnum.MESSAGE))
-        .map(TopicMessageEvent::getMessage)
-        .map(m -> m.getContent().toString())
-        .limitRequest(Long.MAX_VALUE)
-        .collect(Collectors.toList())
-        .block();
-
-    assertThat(polledValues).isEmpty();
+    expectEmitter(backwardEmitter,
+        100,
+        e -> e.expectNextCount(0),
+        StepVerifier.Assertions::hasNotDroppedElements
+    );
   }
 
-  private KafkaConsumer<Bytes, Bytes> createConsumer() {
+  private void expectEmitter(Consumer<FluxSink<TopicMessageEventDTO>> emitter, List<String> expectedValues) {
+    expectEmitter(emitter,
+        expectedValues.size(),
+        e -> e.recordWith(ArrayList::new)
+            .expectNextCount(expectedValues.size())
+            .expectRecordedMatches(r -> r.containsAll(expectedValues))
+            .consumeRecordedWith(r -> log.info("Collected collection: {}", r)),
+        v -> {
+        }
+    );
+  }
+
+  private void expectEmitter(
+      Consumer<FluxSink<TopicMessageEventDTO>> emitter,
+      int take,
+      Function<StepVerifier.Step<String>, StepVerifier.Step<String>> stepConsumer,
+      Consumer<StepVerifier.Assertions> assertionsConsumer) {
+
+    StepVerifier.FirstStep<String> firstStep = StepVerifier.create(
+        Flux.create(emitter)
+            .filter(m -> m.getType().equals(TopicMessageEventDTO.TypeEnum.MESSAGE))
+            .take(take)
+            .map(m -> m.getMessage().getContent())
+    );
+
+    StepVerifier.Step<String> step = stepConsumer.apply(firstStep);
+    assertionsConsumer.accept(step.expectComplete().verifyThenAssertThat());
+  }
+
+  private EnhancedConsumer createConsumer() {
     return createConsumer(Map.of());
   }
 
-  private KafkaConsumer<Bytes, Bytes> createConsumer(Map<String, Object> properties) {
+  private EnhancedConsumer createConsumer(Map<String, Object> properties) {
     final Map<String, ? extends Serializable> map = Map.of(
         ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
         ConsumerConfig.GROUP_ID_CONFIG, UUID.randomUUID().toString(),
-        ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 20, // to check multiple polls
-        ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, BytesDeserializer.class,
-        ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, BytesDeserializer.class
+        ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 19 // to check multiple polls
     );
     Properties props = new Properties();
     props.putAll(map);
     props.putAll(properties);
-    return new KafkaConsumer<>(props);
+    return new EnhancedConsumer(props, PollingThrottler.noop(), ApplicationMetrics.noop());
   }
 
   @Value

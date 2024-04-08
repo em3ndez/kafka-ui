@@ -2,31 +2,31 @@ package com.provectus.kafka.ui.util.jsonschema;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.BooleanNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.fasterxml.jackson.databind.node.TextNode;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import reactor.util.function.Tuple2;
 import reactor.util.function.Tuples;
 
-public class ObjectFieldSchema implements FieldSchema {
+class ObjectFieldSchema implements FieldSchema {
+
+  static final ObjectFieldSchema EMPTY = new ObjectFieldSchema(Map.of(), List.of());
+
   private final Map<String, FieldSchema> properties;
   private final List<String> required;
 
-  public ObjectFieldSchema(Map<String, FieldSchema> properties,
+  ObjectFieldSchema(Map<String, FieldSchema> properties,
                            List<String> required) {
     this.properties = properties;
     this.required = required;
   }
 
-  public Map<String, FieldSchema> getProperties() {
+  Map<String, FieldSchema> getProperties() {
     return properties;
   }
 
-  public List<String> getRequired() {
+  List<String> getRequired() {
     return required;
   }
 

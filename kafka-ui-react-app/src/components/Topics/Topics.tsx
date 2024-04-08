@@ -1,28 +1,31 @@
 import React from 'react';
-import { Switch, Route } from 'react-router-dom';
+import { Route, Routes } from 'react-router-dom';
 import {
-  clusterTopicNewPath,
-  clusterTopicPath,
-  clusterTopicsPath,
+  clusterTopicCopyRelativePath,
+  clusterTopicNewRelativePath,
+  getNonExactPath,
+  RouteParams,
 } from 'lib/paths';
+import SuspenseQueryComponent from 'components/common/SuspenseQueryComponent/SuspenseQueryComponent';
 
-import ListContainer from './List/ListContainer';
-import TopicContainer from './Topic/TopicContainer';
 import New from './New/New';
+import ListPage from './List/ListPage';
+import Topic from './Topic/Topic';
 
 const Topics: React.FC = () => (
-  <Switch>
+  <Routes>
+    <Route index element={<ListPage />} />
+    <Route path={clusterTopicNewRelativePath} element={<New />} />
+    <Route path={clusterTopicCopyRelativePath} element={<New />} />
     <Route
-      exact
-      path={clusterTopicsPath(':clusterName')}
-      component={ListContainer}
+      path={getNonExactPath(RouteParams.topicName)}
+      element={
+        <SuspenseQueryComponent>
+          <Topic />
+        </SuspenseQueryComponent>
+      }
     />
-    <Route exact path={clusterTopicNewPath(':clusterName')} component={New} />
-    <Route
-      path={clusterTopicPath(':clusterName', ':topicName')}
-      component={TopicContainer}
-    />
-  </Switch>
+  </Routes>
 );
 
 export default Topics;

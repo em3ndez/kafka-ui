@@ -1,135 +1,164 @@
 import React from 'react';
-import { ClusterName, NewSchemaSubjectRaw } from 'redux/interfaces';
-import { useForm } from 'react-hook-form';
+import { NewSchemaSubjectRaw } from 'redux/interfaces';
+import { Controller, FormProvider, useForm } from 'react-hook-form';
 import { ErrorMessage } from '@hookform/error-message';
-import Breadcrumb from 'components/common/Breadcrumb/Breadcrumb';
-import { clusterSchemaPath, clusterSchemasPath } from 'lib/paths';
-import { NewSchemaSubject, SchemaType } from 'generated-sources';
+import {
+  ClusterNameRoute,
+  clusterSchemaPath,
+  clusterSchemasPath,
+} from 'lib/paths';
+import { SchemaType } from 'generated-sources';
 import { SCHEMA_NAME_VALIDATION_PATTERN } from 'lib/constants';
-import { useHistory, useParams } from 'react-router';
+import { useNavigate } from 'react-router-dom';
+import { InputLabel } from 'components/common/Input/InputLabel.styled';
+import Input from 'components/common/Input/Input';
+import { FormError } from 'components/common/Input/Input.styled';
+import Select, { SelectOption } from 'components/common/Select/Select';
+import { Button } from 'components/common/Button/Button';
+import { Textarea } from 'components/common/Textbox/Textarea.styled';
+import PageHeading from 'components/common/PageHeading/PageHeading';
+import { schemaAdded } from 'redux/reducers/schemas/schemasSlice';
+import { useAppDispatch } from 'lib/hooks/redux';
+import useAppParams from 'lib/hooks/useAppParams';
+import { showServerError } from 'lib/errorHandling';
+import { schemasApiClient } from 'lib/api';
+import yup from 'lib/yupExtended';
+import { yupResolver } from '@hookform/resolvers/yup';
 
-export interface NewProps {
-  createSchema: (
-    clusterName: ClusterName,
-    newSchemaSubject: NewSchemaSubject
-  ) => Promise<void>;
-}
+import * as S from './New.styled';
 
-const New: React.FC<NewProps> = ({ createSchema }) => {
-  const { clusterName } = useParams<{ clusterName: string }>();
-  const history = useHistory();
+const SchemaTypeOptions: Array<SelectOption> = [
+  { value: SchemaType.AVRO, label: 'AVRO' },
+  { value: SchemaType.JSON, label: 'JSON' },
+  { value: SchemaType.PROTOBUF, label: 'PROTOBUF' },
+];
+
+const schemaCreate = async (
+  { subject, schema, schemaType }: NewSchemaSubjectRaw,
+  clusterName: string
+) => {
+  return schemasApiClient.createNewSchema({
+    clusterName,
+    newSchemaSubject: { subject, schema, schemaType },
+  });
+};
+
+const validationSchema = yup.object().shape({
+  subject: yup
+    .string()
+    .required('Subject is required.')
+    .matches(
+      SCHEMA_NAME_VALIDATION_PATTERN,
+      'Only alphanumeric, _, -, and . allowed'
+    ),
+  schema: yup.string().required('Schema is required.'),
+  schemaType: yup.string().required('Schema Type is required.'),
+});
+
+const New: React.FC = () => {
+  const { clusterName } = useAppParams<ClusterNameRoute>();
+  const navigate = useNavigate();
+  const dispatch = useAppDispatch();
+  const methods = useForm<NewSchemaSubjectRaw>({
+    mode: 'onChange',
+    defaultValues: {
+      schemaType: SchemaType.AVRO,
+    },
+    resolver: yupResolver(validationSchema),
+  });
   const {
     register,
     handleSubmit,
-    formState: { isDirty, isSubmitting, errors },
-  } = useForm<NewSchemaSubjectRaw>();
+    control,
+    formState: { isDirty, isSubmitting, errors, isValid },
+  } = methods;
 
-  const onSubmit = React.useCallback(
-    async ({ subject, schema, schemaType }: NewSchemaSubjectRaw) => {
-      try {
-        await createSchema(clusterName, {
-          subject,
-          schema,
-          schemaType,
-        });
-        history.push(clusterSchemaPath(clusterName, subject));
-      } catch (e) {
-        // Show Error
-      }
-    },
-    [clusterName]
-  );
+  const onSubmit = async ({
+    subject,
+    schema,
+    schemaType,
+  }: NewSchemaSubjectRaw) => {
+    try {
+      const resp = await schemaCreate(
+        { subject, schema, schemaType } as NewSchemaSubjectRaw,
+        clusterName
+      );
+      dispatch(schemaAdded(resp));
+      navigate(clusterSchemaPath(clusterName, subject));
+    } catch (e) {
+      showServerError(e as Response);
+    }
+  };
 
   return (
-    <div className="section">
-      <div className="level">
-        <div className="level-item level-left">
-          <Breadcrumb
-            links={[
-              {
-                href: clusterSchemasPath(clusterName),
-                label: 'Schema Registry',
-              },
-            ]}
-          >
-            New Schema
-          </Breadcrumb>
+    <FormProvider {...methods}>
+      <PageHeading
+        text="Create"
+        backText="Schema Registry"
+        backTo={clusterSchemasPath(clusterName)}
+      />
+      <S.Form onSubmit={handleSubmit(onSubmit)}>
+        <div>
+          <InputLabel>Subject *</InputLabel>
+          <Input
+            inputSize="M"
+            placeholder="Schema Name"
+            autoFocus
+            name="subject"
+            autoComplete="off"
+            disabled={isSubmitting}
+          />
+          <FormError>
+            <ErrorMessage errors={errors} name="subject" />
+          </FormError>
         </div>
-      </div>
 
-      <div className="box">
-        <form onSubmit={handleSubmit(onSubmit)}>
-          <div>
-            <div className="field">
-              <label className="label">Subject *</label>
-              <div className="control">
-                <input
-                  className="input"
-                  placeholder="Schema Name"
-                  {...register('subject', {
-                    required: 'Schema Name is required.',
-                    pattern: {
-                      value: SCHEMA_NAME_VALIDATION_PATTERN,
-                      message: 'Only alphanumeric, _, -, and . allowed',
-                    },
-                  })}
-                  autoComplete="off"
-                  disabled={isSubmitting}
-                />
-              </div>
-              <p className="help is-danger">
-                <ErrorMessage errors={errors} name="subject" />
-              </p>
-            </div>
+        <div>
+          <InputLabel>Schema *</InputLabel>
+          <Textarea
+            {...register('schema', {
+              required: 'Schema is required.',
+            })}
+            disabled={isSubmitting}
+          />
+          <FormError>
+            <ErrorMessage errors={errors} name="schema" />
+          </FormError>
+        </div>
 
-            <div className="field">
-              <label className="label">Schema *</label>
-              <div className="control">
-                <textarea
-                  className="textarea"
-                  {...register('schema', {
-                    required: 'Schema is required.',
-                  })}
-                  disabled={isSubmitting}
-                />
-              </div>
-              <p className="help is-danger">
-                <ErrorMessage errors={errors} name="schema" />
-              </p>
-            </div>
-
-            <div className="field">
-              <label className="label">Schema Type *</label>
-              <div className="control select">
-                <select
-                  {...register('schemaType', {
-                    required: 'Schema Type is required.',
-                  })}
-                  disabled={isSubmitting}
-                >
-                  <option value={SchemaType.AVRO}>AVRO</option>
-                  <option value={SchemaType.JSON}>JSON</option>
-                  <option value={SchemaType.PROTOBUF}>PROTOBUF</option>
-                </select>
-              </div>
-              <p className="help is-danger">
-                <ErrorMessage errors={errors} name="schemaType" />
-              </p>
-            </div>
-          </div>
-          <br />
-          <div className="field">
-            <div className="control">
-              <input
-                type="submit"
-                className="button is-primary"
-                disabled={isSubmitting || !isDirty}
+        <div>
+          <InputLabel>Schema Type *</InputLabel>
+          <Controller
+            control={control}
+            name="schemaType"
+            defaultValue={SchemaTypeOptions[0].value as SchemaType}
+            render={({ field: { name, onChange, value } }) => (
+              <Select
+                selectSize="M"
+                name={name}
+                value={value}
+                onChange={onChange}
+                minWidth="100%"
+                disabled={isSubmitting}
+                options={SchemaTypeOptions}
               />
-            </div>
-          </div>
-        </form>
-      </div>
-    </div>
+            )}
+          />
+          <FormError>
+            <ErrorMessage errors={errors} name="schemaType" />
+          </FormError>
+        </div>
+
+        <Button
+          buttonSize="M"
+          buttonType="primary"
+          type="submit"
+          disabled={!isValid || isSubmitting || !isDirty}
+        >
+          Submit
+        </Button>
+      </S.Form>
+    </FormProvider>
   );
 };
 

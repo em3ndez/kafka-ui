@@ -1,63 +1,47 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
+import WarningIcon from 'components/common/Icons/WarningIcon';
 import { gitCommitPath } from 'lib/paths';
-import { GIT_REPO_LATEST_RELEASE_LINK } from 'lib/constants';
+import { useLatestVersion } from 'lib/hooks/api/latestVersion';
+import { formatTimestamp } from 'lib/dateTimeHelpers';
 
-import compareVersions from './compareVersions';
+import * as S from './Version.styled';
 
-export interface VesionProps {
-  tag?: string;
-  commit?: string;
-}
+const Version: React.FC = () => {
+  const { data: latestVersionInfo = {} } = useLatestVersion();
+  const { buildTime, commitId, isLatestRelease, version } =
+    latestVersionInfo.build;
+  const { versionTag } = latestVersionInfo?.latestRelease || '';
 
-const Version: React.FC<VesionProps> = ({ tag, commit }) => {
-  const [latestVersionInfo, setLatestVersionInfo] = useState({
-    outdated: false,
-    latestTag: '',
-  });
-  useEffect(() => {
-    if (tag) {
-      fetch(GIT_REPO_LATEST_RELEASE_LINK)
-        .then((response) => response.json())
-        .then((data) => {
-          setLatestVersionInfo({
-            outdated: compareVersions(tag, data.tag_name) === -1,
-            latestTag: data.tag_name,
-          });
-        });
-    }
-  }, [tag]);
-  if (!tag) {
-    return null;
-  }
-
-  const { outdated, latestTag } = latestVersionInfo;
+  const currentVersion =
+    isLatestRelease && version?.match(versionTag)
+      ? versionTag
+      : formatTimestamp(buildTime);
 
   return (
-    <div className="is-size-7 has-text-grey">
-      <span className="has-text-grey-light mr-1">Version:</span>
-      <span className="mr-1">{tag}</span>
-      {outdated && (
-        <span
-          className="icon has-text-warning"
-          title={`Your app version is outdated. Current latest version is ${latestTag}`}
+    <S.Wrapper>
+      {!isLatestRelease && (
+        <S.OutdatedWarning
+          title={`Your app version is outdated. Latest version is ${
+            versionTag || 'UNKNOWN'
+          }`}
         >
-          <i className="fas fa-exclamation-triangle" />
-        </span>
+          <WarningIcon />
+        </S.OutdatedWarning>
       )}
-      {commit && (
-        <>
-          <span>&#40;</span>
-          <a
+
+      {commitId && (
+        <div>
+          <S.CurrentCommitLink
             title="Current commit"
             target="__blank"
-            href={gitCommitPath(commit)}
+            href={gitCommitPath(commitId)}
           >
-            {commit}
-          </a>
-          <span>&#41;</span>
-        </>
+            {commitId}
+          </S.CurrentCommitLink>
+        </div>
       )}
-    </div>
+      <S.CurrentVersion>{currentVersion}</S.CurrentVersion>
+    </S.Wrapper>
   );
 };
 

@@ -31,12 +31,14 @@ build/
 .vscode/
 /kafka-ui-api/app/node
 
+### SDKMAN ###
+.sdkmanrc
+
 .DS_Store
 *.code-workspace
 
 
 *.tar.gz
 *.tgz
-**/charts/
 
 /docker/*.override.yaml

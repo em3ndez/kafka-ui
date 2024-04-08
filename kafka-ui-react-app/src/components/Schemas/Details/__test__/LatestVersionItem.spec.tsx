@@ -1,19 +1,28 @@
 import React from 'react';
-import { mount, shallow } from 'enzyme';
-import LatestVersionItem from 'components/Schemas/Details/LatestVersionItem';
+import LatestVersionItem from 'components/Schemas/Details/LatestVersion/LatestVersionItem';
+import { render } from 'lib/testHelpers';
+import { screen } from '@testing-library/react';
 
-import { schema } from './fixtures';
+import { jsonSchema, protoSchema } from './fixtures';
 
 describe('LatestVersionItem', () => {
-  it('renders latest version of schema', () => {
-    const wrapper = mount(<LatestVersionItem schema={schema} />);
-
-    expect(wrapper.find('table').length).toEqual(1);
-    expect(wrapper.find('td').at(1).text()).toEqual('1');
-    expect(wrapper.exists('JSONEditor')).toBeTruthy();
+  it('renders latest version of json schema', () => {
+    render(<LatestVersionItem schema={jsonSchema} />);
+    expect(screen.getByText('Actual version')).toBeInTheDocument();
+    expect(screen.getByText('Latest version')).toBeInTheDocument();
+    expect(screen.getByText('ID')).toBeInTheDocument();
+    expect(screen.getByText('Subject')).toBeInTheDocument();
+    expect(screen.getByText('Compatibility')).toBeInTheDocument();
+    expect(screen.getByText('15')).toBeInTheDocument();
   });
 
-  it('matches snapshot', () => {
-    expect(shallow(<LatestVersionItem schema={schema} />)).toMatchSnapshot();
+  it('renders latest version of compatibility', () => {
+    render(<LatestVersionItem schema={protoSchema} />);
+    expect(screen.getByText('Actual version')).toBeInTheDocument();
+    expect(screen.getByText('Latest version')).toBeInTheDocument();
+    expect(screen.getByText('ID')).toBeInTheDocument();
+    expect(screen.getByText('Subject')).toBeInTheDocument();
+    expect(screen.getByText('Compatibility')).toBeInTheDocument();
+    expect(screen.getByText('BACKWARD')).toBeInTheDocument();
   });
 });

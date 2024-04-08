@@ -1,145 +1,155 @@
 import React from 'react';
-import { ClusterName } from 'redux/interfaces';
-import Breadcrumb from 'components/common/Breadcrumb/Breadcrumb';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import useAppParams from 'lib/hooks/useAppParams';
 import {
-  clusterConsumerGroupResetOffsetsPath,
+  clusterConsumerGroupResetRelativePath,
   clusterConsumerGroupsPath,
+  ClusterGroupParam,
 } from 'lib/paths';
-import { ConsumerGroupID } from 'redux/interfaces/consumerGroup';
-import {
-  ConsumerGroup,
-  ConsumerGroupDetails,
-  ConsumerGroupTopicPartition,
-} from 'generated-sources';
-import PageLoader from 'components/common/PageLoader/PageLoader';
-import ConfirmationModal from 'components/common/ConfirmationModal/ConfirmationModal';
-import { useHistory } from 'react-router';
+import Search from 'components/common/Search/Search';
 import ClusterContext from 'components/contexts/ClusterContext';
+import PageHeading from 'components/common/PageHeading/PageHeading';
+import * as Metrics from 'components/common/Metrics';
+import { Tag } from 'components/common/Tag/Tag.styled';
+import groupBy from 'lodash/groupBy';
+import { Table } from 'components/common/table/Table/Table.styled';
+import getTagColor from 'components/common/Tag/getTagColor';
+import { Dropdown } from 'components/common/Dropdown';
+import { ControlPanelWrapper } from 'components/common/ControlPanel/ControlPanel.styled';
+import { Action, ConsumerGroupState, ResourceType } from 'generated-sources';
+import { ActionDropdownItem } from 'components/common/ActionComponent';
+import TableHeaderCell from 'components/common/table/TableHeaderCell/TableHeaderCell';
+import {
+  useConsumerGroupDetails,
+  useDeleteConsumerGroupMutation,
+} from 'lib/hooks/api/consumers';
+import Tooltip from 'components/common/Tooltip/Tooltip';
+import { CONSUMER_GROUP_STATE_TOOLTIPS } from 'lib/constants';
 
 import ListItem from './ListItem';
 
-export interface Props extends ConsumerGroup, ConsumerGroupDetails {
-  clusterName: ClusterName;
-  partitions?: ConsumerGroupTopicPartition[];
-  isFetched: boolean;
-  isDeleted: boolean;
-  fetchConsumerGroupDetails: (
-    clusterName: ClusterName,
-    consumerGroupID: ConsumerGroupID
-  ) => void;
-  deleteConsumerGroup: (clusterName: string, id: ConsumerGroupID) => void;
-}
-
-const Details: React.FC<Props> = ({
-  clusterName,
-  groupId,
-  partitions,
-  isFetched,
-  isDeleted,
-  fetchConsumerGroupDetails,
-  deleteConsumerGroup,
-}) => {
-  React.useEffect(() => {
-    fetchConsumerGroupDetails(clusterName, groupId);
-  }, [fetchConsumerGroupDetails, clusterName, groupId]);
-  const items = partitions || [];
-  const [isConfirmationModelVisible, setIsConfirmationModelVisible] =
-    React.useState<boolean>(false);
-  const history = useHistory();
+const Details: React.FC = () => {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const searchValue = searchParams.get('q') || '';
   const { isReadOnly } = React.useContext(ClusterContext);
+  const routeParams = useAppParams<ClusterGroupParam>();
+  const { clusterName, consumerGroupID } = routeParams;
 
-  const onDelete = () => {
-    setIsConfirmationModelVisible(false);
-    deleteConsumerGroup(clusterName, groupId);
+  const consumerGroup = useConsumerGroupDetails(routeParams);
+  const deleteConsumerGroup = useDeleteConsumerGroupMutation(routeParams);
+
+  const onDelete = async () => {
+    await deleteConsumerGroup.mutateAsync();
+    navigate('../');
   };
-  React.useEffect(() => {
-    if (isDeleted) {
-      history.push(clusterConsumerGroupsPath(clusterName));
-    }
-  }, [isDeleted]);
 
   const onResetOffsets = () => {
-    history.push(clusterConsumerGroupResetOffsetsPath(clusterName, groupId));
+    navigate(clusterConsumerGroupResetRelativePath);
   };
 
+  const partitionsByTopic = groupBy(consumerGroup.data?.partitions, 'topic');
+  const filteredPartitionsByTopic = Object.keys(partitionsByTopic).filter(
+    (el) => el.includes(searchValue)
+  );
+  const currentPartitionsByTopic = searchValue.length
+    ? filteredPartitionsByTopic
+    : Object.keys(partitionsByTopic);
+
+  const hasAssignedTopics = consumerGroup?.data?.topics !== 0;
+
   return (
-    <div className="section">
-      <div className="level">
-        <div className="level-item level-left">
-          <Breadcrumb
-            links={[
-              {
-                href: clusterConsumerGroupsPath(clusterName),
-                label: 'All Consumer Groups',
-              },
-            ]}
-          >
-            {groupId}
-          </Breadcrumb>
-        </div>
-      </div>
-
-      {isFetched ? (
-        <div className="box">
+    <div>
+      <div>
+        <PageHeading
+          text={consumerGroupID}
+          backTo={clusterConsumerGroupsPath(clusterName)}
+          backText="Consumers"
+        >
           {!isReadOnly && (
-            <div className="level">
-              <div className="level-item level-right buttons">
-                <button
-                  type="button"
-                  className="button"
-                  onClick={onResetOffsets}
-                >
-                  Reset offsets
-                </button>
-                <button
-                  type="button"
-                  className="button is-danger"
-                  onClick={() => setIsConfirmationModelVisible(true)}
-                >
-                  Delete consumer group
-                </button>
-              </div>
-            </div>
+            <Dropdown>
+              <ActionDropdownItem
+                onClick={onResetOffsets}
+                permission={{
+                  resource: ResourceType.CONSUMER,
+                  action: Action.RESET_OFFSETS,
+                  value: consumerGroupID,
+                }}
+                disabled={!hasAssignedTopics}
+              >
+                Reset offset
+              </ActionDropdownItem>
+              <ActionDropdownItem
+                confirm="Are you sure you want to delete this consumer group?"
+                onClick={onDelete}
+                danger
+                permission={{
+                  resource: ResourceType.CONSUMER,
+                  action: Action.DELETE,
+                  value: consumerGroupID,
+                }}
+              >
+                Delete consumer group
+              </ActionDropdownItem>
+            </Dropdown>
           )}
-
-          <table className="table is-striped is-fullwidth">
-            <thead>
-              <tr>
-                <th>Consumer ID</th>
-                <th>Host</th>
-                <th>Topic</th>
-                <th>Partition</th>
-                <th>Messages behind</th>
-                <th>Current offset</th>
-                <th>End offset</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.length === 0 && (
-                <tr>
-                  <td colSpan={10}>No active consumer groups</td>
-                </tr>
-              )}
-              {items.map((consumer) => (
-                <ListItem
-                  key={consumer.consumerId}
-                  clusterName={clusterName}
-                  consumer={consumer}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <PageLoader />
-      )}
-      <ConfirmationModal
-        isOpen={isConfirmationModelVisible}
-        onCancel={() => setIsConfirmationModelVisible(false)}
-        onConfirm={onDelete}
-      >
-        Are you sure you want to delete this consumer group?
-      </ConfirmationModal>
+        </PageHeading>
+      </div>
+      <Metrics.Wrapper>
+        <Metrics.Section>
+          <Metrics.Indicator label="State">
+            <Tooltip
+              value={
+                <Tag color={getTagColor(consumerGroup.data?.state)}>
+                  {consumerGroup.data?.state}
+                </Tag>
+              }
+              content={
+                CONSUMER_GROUP_STATE_TOOLTIPS[
+                  consumerGroup.data?.state || ConsumerGroupState.UNKNOWN
+                ]
+              }
+              placement="bottom-start"
+            />
+          </Metrics.Indicator>
+          <Metrics.Indicator label="Members">
+            {consumerGroup.data?.members}
+          </Metrics.Indicator>
+          <Metrics.Indicator label="Assigned Topics">
+            {consumerGroup.data?.topics}
+          </Metrics.Indicator>
+          <Metrics.Indicator label="Assigned Partitions">
+            {consumerGroup.data?.partitions?.length}
+          </Metrics.Indicator>
+          <Metrics.Indicator label="Coordinator ID">
+            {consumerGroup.data?.coordinator?.id}
+          </Metrics.Indicator>
+          <Metrics.Indicator label="Total lag">
+            {consumerGroup.data?.consumerLag}
+          </Metrics.Indicator>
+        </Metrics.Section>
+      </Metrics.Wrapper>
+      <ControlPanelWrapper hasInput style={{ margin: '16px 0 20px' }}>
+        <Search placeholder="Search by Topic Name" />
+      </ControlPanelWrapper>
+      <Table isFullwidth>
+        <thead>
+          <tr>
+            <TableHeaderCell title="Topic" />
+            <TableHeaderCell title="Consumer Lag" />
+          </tr>
+        </thead>
+        <tbody>
+          {currentPartitionsByTopic.map((key) => (
+            <ListItem
+              clusterName={clusterName}
+              consumers={partitionsByTopic[key]}
+              name={key}
+              key={key}
+            />
+          ))}
+        </tbody>
+      </Table>
     </div>
   );
 };

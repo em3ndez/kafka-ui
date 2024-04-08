@@ -1,112 +1,54 @@
-import React, { useCallback, useEffect, FC } from 'react';
-import { yupResolver } from '@hookform/resolvers/yup';
-import JSONEditor from 'components/common/JSONEditor/JSONEditor';
-import SQLEditor from 'components/common/SQLEditor/SQLEditor';
-import yup from 'lib/yupExtended';
-import { useForm, Controller } from 'react-hook-form';
-import { useParams } from 'react-router';
-import { executeKsql } from 'redux/actions/thunks/ksqlDb';
-import ResultRenderer from 'components/KsqlDb/Query/ResultRenderer';
-import { useDispatch, useSelector } from 'react-redux';
-import { getKsqlExecution } from 'redux/reducers/ksqlDb/selectors';
-import { resetExecutionResult } from 'redux/actions';
+import React from 'react';
+import useAppParams from 'lib/hooks/useAppParams';
+import TableRenderer from 'components/KsqlDb/Query/renderer/TableRenderer/TableRenderer';
+import { ClusterNameRoute } from 'lib/paths';
+import {
+  useExecuteKsqlkDbQueryMutation,
+  useKsqlkDbSSE,
+} from 'lib/hooks/api/ksqlDb';
 
-type FormValues = {
-  ksql: string;
-  streamsProperties: string;
-};
+import type { FormValues } from './QueryForm/QueryForm';
+import QueryForm from './QueryForm/QueryForm';
 
-const validationSchema = yup.object({
-  ksql: yup.string().trim().required(),
-});
+const Query = () => {
+  const { clusterName } = useAppParams<ClusterNameRoute>();
+  const executeQuery = useExecuteKsqlkDbQueryMutation();
+  const [pipeId, setPipeId] = React.useState<string | false>(false);
 
-const Query: FC = () => {
-  const { clusterName } = useParams<{ clusterName: string }>();
-  const dispatch = useDispatch();
+  const sse = useKsqlkDbSSE({ clusterName, pipeId });
 
-  const { executionResult, fetching } = useSelector(getKsqlExecution);
+  const isFetching = executeQuery.isLoading || sse.isFetching;
 
-  const reset = useCallback(() => {
-    dispatch(resetExecutionResult());
-  }, [dispatch]);
-
-  useEffect(() => {
-    return reset;
-  }, []);
-
-  const { handleSubmit, control } = useForm<FormValues>({
-    mode: 'onTouched',
-    resolver: yupResolver(validationSchema),
-    defaultValues: {
-      ksql: '',
-      streamsProperties: '',
-    },
-  });
-
-  const submitHandler = useCallback(async (values: FormValues) => {
-    dispatch(
-      executeKsql({
-        clusterName,
-        ksqlCommand: {
-          ...values,
-          streamsProperties: values.streamsProperties
-            ? JSON.parse(values.streamsProperties)
-            : undefined,
-        },
-      })
+  const submitHandler = async (values: FormValues) => {
+    const filtered = values.streamsProperties.filter(({ key }) => key != null);
+    const streamsProperties = filtered.reduce<Record<string, string>>(
+      (acc, current) => ({ ...acc, [current.key]: current.value }),
+      {}
     );
-  }, []);
+    await executeQuery.mutateAsync(
+      {
+        clusterName,
+        ksqlCommandV2: {
+          ...values,
+          streamsProperties:
+            values.streamsProperties[0].key !== ''
+              ? JSON.parse(JSON.stringify(streamsProperties))
+              : undefined,
+        },
+      },
+      { onSuccess: (data) => setPipeId(data.pipeId) }
+    );
+  };
 
   return (
     <>
-      <div className="box">
-        <form onSubmit={handleSubmit(submitHandler)}>
-          <div className="columns">
-            <div className="control column m-0">
-              <label className="label">KSQL</label>
-              <Controller
-                control={control}
-                name="ksql"
-                render={({ field }) => (
-                  <SQLEditor {...field} readOnly={fetching} />
-                )}
-              />
-            </div>
-            <div className="control column m-0">
-              <label className="label">Stream properties</label>
-              <Controller
-                control={control}
-                name="streamsProperties"
-                render={({ field }) => (
-                  <JSONEditor {...field} readOnly={fetching} />
-                )}
-              />
-            </div>
-          </div>
-          <div className="columns">
-            <div className="column is-flex-grow-0">
-              <button
-                className="button is-primary"
-                type="submit"
-                disabled={fetching}
-              >
-                Execute
-              </button>
-            </div>
-            <div className="column is-flex-grow-0">
-              <button
-                className="button is-danger"
-                type="button"
-                disabled={!executionResult}
-                onClick={reset}
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-        </form>
-      </div>
-      <ResultRenderer result={executionResult} />
+      <QueryForm
+        fetching={isFetching}
+        hasResults={!!sse.data && !!pipeId}
+        resetResults={() => setPipeId(false)}
+        submitHandler={submitHandler}
+      />
+      {pipeId && !!sse.data && <TableRenderer table={sse.data} />}
     </>
   );
 };

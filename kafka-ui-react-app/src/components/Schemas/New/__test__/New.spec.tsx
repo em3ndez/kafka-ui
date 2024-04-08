@@ -1,37 +1,49 @@
 import React from 'react';
-import configureStore from 'redux/store/configureStore';
-import { mount, shallow } from 'enzyme';
-import { Provider } from 'react-redux';
-import { StaticRouter } from 'react-router-dom';
-import NewContainer from 'components/Schemas/New/NewContainer';
-import New, { NewProps } from 'components/Schemas/New/New';
+import New from 'components/Schemas/New/New';
+import { render, WithRoute } from 'lib/testHelpers';
+import { clusterSchemaNewPath } from 'lib/paths';
+import { act, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
-describe('New', () => {
-  describe('Container', () => {
-    const store = configureStore();
+const clusterName = 'local';
+const subjectValue = 'subject';
+const schemaValue = 'schema';
 
-    it('renders view', () => {
-      const component = shallow(
-        <Provider store={store}>
-          <NewContainer />
-        </Provider>
-      );
+describe('New Component', () => {
+  const renderComponent = async () => {
+    render(
+      <WithRoute path={clusterSchemaNewPath()}>
+        <New />
+      </WithRoute>,
+      {
+        initialEntries: [clusterSchemaNewPath(clusterName)],
+      }
+    );
+  };
 
-      expect(component.exists()).toBeTruthy();
-    });
+  beforeEach(async () => {
+    await act(renderComponent);
   });
 
-  describe('View', () => {
-    const pathname = '/ui/clusters/clusterName/schemas/create_new';
+  it('renders component', async () => {
+    expect(screen.getByText('Create')).toBeInTheDocument();
+  });
 
-    const setupWrapper = (props: Partial<NewProps> = {}) => (
-      <StaticRouter location={{ pathname }} context={{}}>
-        <New createSchema={jest.fn()} {...props} />
-      </StaticRouter>
-    );
+  it('submit button will be disabled while form fields are not filled', () => {
+    const submitBtn = screen.getByRole('button', { name: /submit/i });
+    expect(submitBtn).toBeDisabled();
+  });
 
-    it('matches snapshot', () => {
-      expect(mount(setupWrapper())).toMatchSnapshot();
-    });
+  it('submit button will be enabled when form fields are filled', async () => {
+    const subject = screen.getByPlaceholderText('Schema Name');
+    const schema = screen.getAllByRole('textbox')[1];
+    const schemaTypeSelect = screen.getByRole('listbox');
+
+    await userEvent.type(subject, subjectValue);
+    await userEvent.type(schema, schemaValue);
+    await userEvent.selectOptions(schemaTypeSelect, ['AVRO']);
+
+    const submitBtn = screen.getByRole('button', { name: /Submit/i });
+    expect(submitBtn).toBeEnabled();
   });
 });

@@ -4,21 +4,21 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Map;
 
-public abstract class JsonType {
+abstract class JsonType {
 
   protected final Type type;
 
-  public JsonType(Type type) {
+  protected JsonType(Type type) {
     this.type = type;
   }
 
-  public Type getType() {
+  Type getType() {
     return type;
   }
 
-  public abstract Map<String, JsonNode> toJsonNode(ObjectMapper mapper);
+  abstract Map<String, JsonNode> toJsonNode(ObjectMapper mapper);
 
-  public enum Type {
+  enum Type {
     NULL,
     BOOLEAN,
     OBJECT,

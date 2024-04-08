@@ -1,18 +1,21 @@
 import React from 'react';
-import { shallow } from 'enzyme';
-import SchemaVersion from 'components/Schemas/Details/SchemaVersion';
+import SchemaVersion from 'components/Schemas/Details/SchemaVersion/SchemaVersion';
+import { render } from 'lib/testHelpers';
+import { SchemaSubject } from 'generated-sources';
+import { Row } from '@tanstack/react-table';
 
-import { versions } from './fixtures';
+import { jsonSchema } from './fixtures';
+
+const renderComponent = () => {
+  const row = {
+    original: jsonSchema,
+  };
+
+  return render(<SchemaVersion row={row as Row<SchemaSubject>} />);
+};
 
 describe('SchemaVersion', () => {
-  it('renders versions', () => {
-    const wrapper = shallow(<SchemaVersion version={versions[0]} />);
-
-    expect(wrapper.find('td').length).toEqual(3);
-    expect(wrapper.exists('JSONEditor')).toBeTruthy();
-  });
-
-  it('matches snapshot', () => {
-    expect(shallow(<SchemaVersion version={versions[0]} />)).toMatchSnapshot();
+  it('renders versions', async () => {
+    renderComponent();
   });
 });

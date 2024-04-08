@@ -1,194 +1,203 @@
 package com.provectus.kafka.ui.mapper;
 
 import com.provectus.kafka.ui.config.ClustersProperties;
-import com.provectus.kafka.ui.model.BrokerConfig;
-import com.provectus.kafka.ui.model.BrokerDiskUsage;
-import com.provectus.kafka.ui.model.BrokerMetrics;
-import com.provectus.kafka.ui.model.Cluster;
-import com.provectus.kafka.ui.model.ClusterMetrics;
-import com.provectus.kafka.ui.model.ClusterStats;
-import com.provectus.kafka.ui.model.CompatibilityCheckResponse;
-import com.provectus.kafka.ui.model.CompatibilityLevel;
-import com.provectus.kafka.ui.model.ConfigSource;
-import com.provectus.kafka.ui.model.ConfigSynonym;
-import com.provectus.kafka.ui.model.Connect;
-import com.provectus.kafka.ui.model.Feature;
+import com.provectus.kafka.ui.model.BrokerConfigDTO;
+import com.provectus.kafka.ui.model.BrokerDTO;
+import com.provectus.kafka.ui.model.BrokerDiskUsageDTO;
+import com.provectus.kafka.ui.model.BrokerMetricsDTO;
+import com.provectus.kafka.ui.model.ClusterDTO;
+import com.provectus.kafka.ui.model.ClusterFeature;
+import com.provectus.kafka.ui.model.ClusterMetricsDTO;
+import com.provectus.kafka.ui.model.ClusterStatsDTO;
+import com.provectus.kafka.ui.model.ConfigSourceDTO;
+import com.provectus.kafka.ui.model.ConfigSynonymDTO;
+import com.provectus.kafka.ui.model.ConnectDTO;
+import com.provectus.kafka.ui.model.InternalBroker;
 import com.provectus.kafka.ui.model.InternalBrokerConfig;
 import com.provectus.kafka.ui.model.InternalBrokerDiskUsage;
-import com.provectus.kafka.ui.model.InternalBrokerMetrics;
-import com.provectus.kafka.ui.model.InternalClusterMetrics;
+import com.provectus.kafka.ui.model.InternalClusterState;
 import com.provectus.kafka.ui.model.InternalPartition;
 import com.provectus.kafka.ui.model.InternalReplica;
-import com.provectus.kafka.ui.model.InternalSchemaRegistry;
 import com.provectus.kafka.ui.model.InternalTopic;
 import com.provectus.kafka.ui.model.InternalTopicConfig;
-import com.provectus.kafka.ui.model.KafkaCluster;
-import com.provectus.kafka.ui.model.KafkaConnectCluster;
-import com.provectus.kafka.ui.model.Partition;
-import com.provectus.kafka.ui.model.Replica;
-import com.provectus.kafka.ui.model.Topic;
-import com.provectus.kafka.ui.model.TopicConfig;
-import com.provectus.kafka.ui.model.TopicDetails;
-import com.provectus.kafka.ui.model.schemaregistry.InternalCompatibilityCheck;
-import com.provectus.kafka.ui.model.schemaregistry.InternalCompatibilityLevel;
-import java.math.BigDecimal;
-import java.nio.file.Path;
-import java.util.Arrays;
-import java.util.Collections;
+import com.provectus.kafka.ui.model.KafkaAclDTO;
+import com.provectus.kafka.ui.model.KafkaAclNamePatternTypeDTO;
+import com.provectus.kafka.ui.model.KafkaAclResourceTypeDTO;
+import com.provectus.kafka.ui.model.MetricDTO;
+import com.provectus.kafka.ui.model.Metrics;
+import com.provectus.kafka.ui.model.PartitionDTO;
+import com.provectus.kafka.ui.model.ReplicaDTO;
+import com.provectus.kafka.ui.model.TopicConfigDTO;
+import com.provectus.kafka.ui.model.TopicDTO;
+import com.provectus.kafka.ui.model.TopicDetailsDTO;
+import com.provectus.kafka.ui.model.TopicProducerStateDTO;
+import com.provectus.kafka.ui.service.metrics.RawMetric;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
-import java.util.stream.Collectors;
 import org.apache.kafka.clients.admin.ConfigEntry;
+import org.apache.kafka.clients.admin.ProducerState;
+import org.apache.kafka.common.acl.AccessControlEntry;
+import org.apache.kafka.common.acl.AclBinding;
+import org.apache.kafka.common.acl.AclOperation;
+import org.apache.kafka.common.acl.AclPermissionType;
+import org.apache.kafka.common.resource.PatternType;
+import org.apache.kafka.common.resource.ResourcePattern;
+import org.apache.kafka.common.resource.ResourceType;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
-import org.mapstruct.Named;
 
 @Mapper(componentModel = "spring")
 public interface ClusterMapper {
 
-  @Mapping(target = "brokerCount", source = "metrics.brokerCount")
-  @Mapping(target = "onlinePartitionCount", source = "metrics.onlinePartitionCount")
-  @Mapping(target = "topicCount", source = "metrics.topicCount")
-  @Mapping(target = "bytesInPerSec", source = "metrics.bytesInPerSec",
-      qualifiedByName = "sumMetrics")
-  @Mapping(target = "bytesOutPerSec", source = "metrics.bytesOutPerSec",
-      qualifiedByName = "sumMetrics")
-  Cluster toCluster(KafkaCluster cluster);
+  ClusterDTO toCluster(InternalClusterState clusterState);
 
-  @Mapping(target = "protobufFile", source = "protobufFile", qualifiedByName = "resolvePath")
-  @Mapping(target = "properties", source = "properties", qualifiedByName = "setProperties")
-  @Mapping(target = "schemaRegistry", source = ".", qualifiedByName = "setSchemaRegistry")
-  KafkaCluster toKafkaCluster(ClustersProperties.Cluster clusterProperties);
+  ClusterStatsDTO toClusterStats(InternalClusterState clusterState);
 
-  @Mapping(target = "diskUsage", source = "internalBrokerDiskUsage",
-      qualifiedByName = "mapDiskUsage")
-  ClusterStats toClusterStats(InternalClusterMetrics metrics);
+  default ClusterMetricsDTO toClusterMetrics(Metrics metrics) {
+    return new ClusterMetricsDTO()
+        .items(metrics.getSummarizedMetrics().map(this::convert).toList());
+  }
 
-  @Mapping(target = "items", source = "metrics")
-  ClusterMetrics toClusterMetrics(InternalClusterMetrics metrics);
+  private MetricDTO convert(RawMetric rawMetric) {
+    return new MetricDTO()
+        .name(rawMetric.name())
+        .labels(rawMetric.labels())
+        .value(rawMetric.value());
+  }
 
-  BrokerMetrics toBrokerMetrics(InternalBrokerMetrics metrics);
+  default BrokerMetricsDTO toBrokerMetrics(List<RawMetric> metrics) {
+    return new BrokerMetricsDTO()
+        .metrics(metrics.stream().map(this::convert).toList());
+  }
 
   @Mapping(target = "isSensitive", source = "sensitive")
   @Mapping(target = "isReadOnly", source = "readOnly")
-  BrokerConfig toBrokerConfig(InternalBrokerConfig config);
+  BrokerConfigDTO toBrokerConfig(InternalBrokerConfig config);
 
-  default ConfigSynonym toConfigSynonym(ConfigEntry.ConfigSynonym config) {
+  default ConfigSynonymDTO toConfigSynonym(ConfigEntry.ConfigSynonym config) {
     if (config == null) {
       return null;
     }
 
-    ConfigSynonym configSynonym = new ConfigSynonym();
+    ConfigSynonymDTO configSynonym = new ConfigSynonymDTO();
     configSynonym.setName(config.name());
     configSynonym.setValue(config.value());
     if (config.source() != null) {
-      configSynonym.setSource(ConfigSource.valueOf(config.source().name()));
+      configSynonym.setSource(ConfigSourceDTO.valueOf(config.source().name()));
     }
 
     return configSynonym;
   }
 
-  Topic toTopic(InternalTopic topic);
+  TopicDTO toTopic(InternalTopic topic);
 
-  Partition toPartition(InternalPartition topic);
+  PartitionDTO toPartition(InternalPartition topic);
 
-  @Named("setSchemaRegistry")
-  default InternalSchemaRegistry setSchemaRegistry(ClustersProperties.Cluster clusterProperties) {
-    if (clusterProperties == null
-        || clusterProperties.getSchemaRegistry() == null) {
-      return null;
-    }
+  BrokerDTO toBrokerDto(InternalBroker broker);
 
-    InternalSchemaRegistry.InternalSchemaRegistryBuilder internalSchemaRegistry =
-        InternalSchemaRegistry.builder();
-
-    internalSchemaRegistry.url(
-        clusterProperties.getSchemaRegistry() != null
-            ? Arrays.asList(clusterProperties.getSchemaRegistry().split(","))
-            : Collections.emptyList()
-    );
-
-    if (clusterProperties.getSchemaRegistryAuth() != null) {
-      internalSchemaRegistry.username(clusterProperties.getSchemaRegistryAuth().getUsername());
-      internalSchemaRegistry.password(clusterProperties.getSchemaRegistryAuth().getPassword());
-    }
-
-    return internalSchemaRegistry.build();
-  }
-
-  TopicDetails toTopicDetails(InternalTopic topic);
-
-  default TopicDetails toTopicDetails(InternalTopic topic, InternalClusterMetrics metrics) {
-    final TopicDetails result = toTopicDetails(topic);
-    result.setBytesInPerSec(
-        metrics.getBytesInPerSec().get(topic.getName())
-    );
-    result.setBytesOutPerSec(
-        metrics.getBytesOutPerSec().get(topic.getName())
-    );
-    return result;
-  }
+  TopicDetailsDTO toTopicDetails(InternalTopic topic);
 
   @Mapping(target = "isReadOnly", source = "readOnly")
   @Mapping(target = "isSensitive", source = "sensitive")
-  TopicConfig toTopicConfig(InternalTopicConfig topic);
+  TopicConfigDTO toTopicConfig(InternalTopicConfig topic);
 
-  Replica toReplica(InternalReplica replica);
+  ReplicaDTO toReplica(InternalReplica replica);
 
-  Connect toKafkaConnect(KafkaConnectCluster connect);
+  ConnectDTO toKafkaConnect(ClustersProperties.ConnectCluster connect);
 
-  List<Cluster.FeaturesEnum> toFeaturesEnum(List<Feature> features);
+  List<ClusterDTO.FeaturesEnum> toFeaturesEnum(List<ClusterFeature> features);
 
-  @Mapping(target = "isCompatible", source = "compatible")
-  CompatibilityCheckResponse toCompatibilityCheckResponse(InternalCompatibilityCheck dto);
-
-  @Mapping(target = "compatibility", source = "compatibilityLevel")
-  CompatibilityLevel toCompatibilityLevel(InternalCompatibilityLevel dto);
-
-  default List<Partition> map(Map<Integer, InternalPartition> map) {
-    return map.values().stream().map(this::toPartition).collect(Collectors.toList());
+  default List<PartitionDTO> map(Map<Integer, InternalPartition> map) {
+    return map.values().stream().map(this::toPartition).toList();
   }
 
-  default BrokerDiskUsage map(Integer id, InternalBrokerDiskUsage internalBrokerDiskUsage) {
-    final BrokerDiskUsage brokerDiskUsage = new BrokerDiskUsage();
+  default BrokerDiskUsageDTO map(Integer id, InternalBrokerDiskUsage internalBrokerDiskUsage) {
+    final BrokerDiskUsageDTO brokerDiskUsage = new BrokerDiskUsageDTO();
     brokerDiskUsage.setBrokerId(id);
     brokerDiskUsage.segmentCount((int) internalBrokerDiskUsage.getSegmentCount());
     brokerDiskUsage.segmentSize(internalBrokerDiskUsage.getSegmentSize());
     return brokerDiskUsage;
   }
 
-  @Named("mapDiskUsage")
-  default List<BrokerDiskUsage> mapDiskUsage(Map<Integer, InternalBrokerDiskUsage> brokers) {
-    return brokers.entrySet().stream().map(e -> this.map(e.getKey(), e.getValue()))
-        .collect(Collectors.toList());
+  default TopicProducerStateDTO map(int partition, ProducerState state) {
+    return new TopicProducerStateDTO()
+        .partition(partition)
+        .producerId(state.producerId())
+        .producerEpoch(state.producerEpoch())
+        .lastSequence(state.lastSequence())
+        .lastTimestampMs(state.lastTimestamp())
+        .coordinatorEpoch(state.coordinatorEpoch().stream().boxed().findAny().orElse(null))
+        .currentTransactionStartOffset(state.currentTransactionStartOffset().stream().boxed().findAny().orElse(null));
   }
 
-  @Named("sumMetrics")
-  default BigDecimal sumMetrics(Map<String, BigDecimal> metrics) {
-    if (metrics != null) {
-      return metrics.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
-    } else {
-      return BigDecimal.ZERO;
-    }
+  static KafkaAclDTO.OperationEnum mapAclOperation(AclOperation operation) {
+    return switch (operation) {
+      case ALL -> KafkaAclDTO.OperationEnum.ALL;
+      case READ -> KafkaAclDTO.OperationEnum.READ;
+      case WRITE -> KafkaAclDTO.OperationEnum.WRITE;
+      case CREATE -> KafkaAclDTO.OperationEnum.CREATE;
+      case DELETE -> KafkaAclDTO.OperationEnum.DELETE;
+      case ALTER -> KafkaAclDTO.OperationEnum.ALTER;
+      case DESCRIBE -> KafkaAclDTO.OperationEnum.DESCRIBE;
+      case CLUSTER_ACTION -> KafkaAclDTO.OperationEnum.CLUSTER_ACTION;
+      case DESCRIBE_CONFIGS -> KafkaAclDTO.OperationEnum.DESCRIBE_CONFIGS;
+      case ALTER_CONFIGS -> KafkaAclDTO.OperationEnum.ALTER_CONFIGS;
+      case IDEMPOTENT_WRITE -> KafkaAclDTO.OperationEnum.IDEMPOTENT_WRITE;
+      case CREATE_TOKENS -> KafkaAclDTO.OperationEnum.CREATE_TOKENS;
+      case DESCRIBE_TOKENS -> KafkaAclDTO.OperationEnum.DESCRIBE_TOKENS;
+      case ANY -> throw new IllegalArgumentException("ANY operation can be only part of filter");
+      case UNKNOWN -> KafkaAclDTO.OperationEnum.UNKNOWN;
+    };
   }
 
-  @Named("resolvePath")
-  default Path resolvePath(String path) {
-    if (path != null) {
-      return Path.of(path);
-    } else {
-      return null;
-    }
+  static KafkaAclResourceTypeDTO mapAclResourceType(ResourceType resourceType) {
+    return switch (resourceType) {
+      case CLUSTER -> KafkaAclResourceTypeDTO.CLUSTER;
+      case TOPIC -> KafkaAclResourceTypeDTO.TOPIC;
+      case GROUP -> KafkaAclResourceTypeDTO.GROUP;
+      case DELEGATION_TOKEN -> KafkaAclResourceTypeDTO.DELEGATION_TOKEN;
+      case TRANSACTIONAL_ID -> KafkaAclResourceTypeDTO.TRANSACTIONAL_ID;
+      case USER -> KafkaAclResourceTypeDTO.USER;
+      case ANY -> throw new IllegalArgumentException("ANY type can be only part of filter");
+      case UNKNOWN -> KafkaAclResourceTypeDTO.UNKNOWN;
+    };
   }
 
-  @Named("setProperties")
-  default Properties setProperties(Properties properties) {
-    Properties copy = new Properties();
-    if (properties != null) {
-      copy.putAll(properties);
-    }
-    return copy;
+  static ResourceType mapAclResourceTypeDto(KafkaAclResourceTypeDTO dto) {
+    return ResourceType.valueOf(dto.name());
+  }
+
+  static PatternType mapPatternTypeDto(KafkaAclNamePatternTypeDTO dto) {
+    return PatternType.valueOf(dto.name());
+  }
+
+  static AclBinding toAclBinding(KafkaAclDTO dto) {
+    return new AclBinding(
+        new ResourcePattern(
+            mapAclResourceTypeDto(dto.getResourceType()),
+            dto.getResourceName(),
+            mapPatternTypeDto(dto.getNamePatternType())
+        ),
+        new AccessControlEntry(
+            dto.getPrincipal(),
+            dto.getHost(),
+            AclOperation.valueOf(dto.getOperation().name()),
+            AclPermissionType.valueOf(dto.getPermission().name())
+        )
+    );
+  }
+
+  static KafkaAclDTO toKafkaAclDto(AclBinding binding) {
+    var pattern = binding.pattern();
+    var filter = binding.toFilter().entryFilter();
+    return new KafkaAclDTO()
+        .resourceType(mapAclResourceType(pattern.resourceType()))
+        .resourceName(pattern.name())
+        .namePatternType(KafkaAclNamePatternTypeDTO.fromValue(pattern.patternType().name()))
+        .principal(filter.principal())
+        .host(filter.host())
+        .operation(mapAclOperation(filter.operation()))
+        .permission(KafkaAclDTO.PermissionEnum.fromValue(filter.permissionType().name()));
   }
 
 }

@@ -1,207 +1,265 @@
-import JSONEditor from 'components/common/JSONEditor/JSONEditor';
-import PageLoader from 'components/common/PageLoader/PageLoader';
-import {
-  CreateTopicMessage,
-  Partition,
-  TopicMessageSchema,
-} from 'generated-sources';
 import React from 'react';
 import { useForm, Controller } from 'react-hook-form';
-import { useHistory } from 'react-router';
-import { clusterTopicMessagesPath } from 'lib/paths';
-import jsf from 'json-schema-faker';
+import { RouteParamsClusterTopic } from 'lib/paths';
+import { Button } from 'components/common/Button/Button';
+import Editor from 'components/common/Editor/Editor';
+import Select, { SelectOption } from 'components/common/Select/Select';
+import Switch from 'components/common/Switch/Switch';
+import useAppParams from 'lib/hooks/useAppParams';
+import { showAlert } from 'lib/errorHandling';
+import { useSendMessage, useTopicDetails } from 'lib/hooks/api/topics';
+import { InputLabel } from 'components/common/Input/InputLabel.styled';
+import { useSerdes } from 'lib/hooks/api/topicMessages';
+import { SerdeUsage } from 'generated-sources';
 
-import validateMessage from './validateMessage';
+import * as S from './SendMessage.styled';
+import {
+  getDefaultValues,
+  getPartitionOptions,
+  getSerdeOptions,
+  validateBySchema,
+} from './utils';
 
-export interface Props {
-  clusterName: string;
-  topicName: string;
-  fetchTopicMessageSchema: (clusterName: string, topicName: string) => void;
-  sendTopicMessage: (
-    clusterName: string,
-    topicName: string,
-    payload: CreateTopicMessage
-  ) => void;
-  messageSchema: TopicMessageSchema | undefined;
-  schemaIsFetched: boolean;
-  messageIsSending: boolean;
-  partitions: Partition[];
+interface FormType {
+  key: string;
+  content: string;
+  headers: string;
+  partition: number;
+  keySerde: string;
+  valueSerde: string;
+  keepContents: boolean;
 }
 
-const SendMessage: React.FC<Props> = ({
-  clusterName,
-  topicName,
-  fetchTopicMessageSchema,
-  sendTopicMessage,
-  messageSchema,
-  schemaIsFetched,
-  messageIsSending,
-  partitions,
+const SendMessage: React.FC<{ closeSidebar: () => void }> = ({
+  closeSidebar,
 }) => {
-  const [keyExampleValue, setKeyExampleValue] = React.useState('');
-  const [contentExampleValue, setContentExampleValue] = React.useState('');
-  const [schemaIsReady, setSchemaIsReady] = React.useState(false);
-  const [schemaErrors, setSchemaErrors] = React.useState<string[]>([]);
+  const { clusterName, topicName } = useAppParams<RouteParamsClusterTopic>();
+  const { data: topic } = useTopicDetails({ clusterName, topicName });
+  const { data: serdes = {} } = useSerdes({
+    clusterName,
+    topicName,
+    use: SerdeUsage.SERIALIZE,
+  });
+  const sendMessage = useSendMessage({ clusterName, topicName });
+
+  const defaultValues = React.useMemo(() => getDefaultValues(serdes), [serdes]);
+  const partitionOptions: SelectOption[] = React.useMemo(
+    () => getPartitionOptions(topic?.partitions || []),
+    [topic]
+  );
   const {
-    register,
     handleSubmit,
-    formState: { isSubmitting, isDirty },
+    formState: { isSubmitting },
     control,
-  } = useForm({ mode: 'onChange' });
-  const history = useHistory();
+    setValue,
+  } = useForm<FormType>({
+    mode: 'onChange',
+    defaultValues: {
+      ...defaultValues,
+      partition: Number(partitionOptions[0].value),
+      keepContents: false,
+    },
+  });
 
-  jsf.option('fillProperties', false);
-  jsf.option('alwaysFakeOptionals', true);
+  const submit = async ({
+    keySerde,
+    valueSerde,
+    key,
+    content,
+    headers,
+    partition,
+    keepContents,
+  }: FormType) => {
+    let errors: string[] = [];
 
-  React.useEffect(() => {
-    fetchTopicMessageSchema(clusterName, topicName);
-  }, []);
-  React.useEffect(() => {
-    if (schemaIsFetched && messageSchema) {
-      setKeyExampleValue(
-        JSON.stringify(
-          jsf.generate(JSON.parse(messageSchema.key.schema)),
-          null,
-          '\t'
-        )
-      );
-      setContentExampleValue(
-        JSON.stringify(
-          jsf.generate(JSON.parse(messageSchema.value.schema)),
-          null,
-          '\t'
-        )
-      );
-      setSchemaIsReady(true);
+    if (keySerde) {
+      const selectedKeySerde = serdes.key?.find((k) => k.name === keySerde);
+      errors = validateBySchema(key, selectedKeySerde?.schema, 'key');
     }
-  }, [schemaIsFetched]);
 
-  const onSubmit = async (data: {
-    key: string;
-    content: string;
-    headers: string;
-    partition: number;
-  }) => {
-    if (messageSchema) {
-      const key = data.key || keyExampleValue;
-      const content = data.content || contentExampleValue;
-      const { partition } = data;
-      const headers = data.headers ? JSON.parse(data.headers) : undefined;
-      const messageIsValid = await validateMessage(
-        key,
-        content,
-        messageSchema,
-        setSchemaErrors
-      );
+    if (valueSerde) {
+      const selectedValue = serdes.value?.find((v) => v.name === valueSerde);
+      errors = [
+        ...errors,
+        ...validateBySchema(content, selectedValue?.schema, 'content'),
+      ];
+    }
 
-      if (messageIsValid) {
-        sendTopicMessage(clusterName, topicName, {
-          key,
-          content,
-          headers,
-          partition,
-        });
-        history.push(clusterTopicMessagesPath(clusterName, topicName));
+    let parsedHeaders;
+    if (headers) {
+      try {
+        parsedHeaders = JSON.parse(headers);
+      } catch (error) {
+        errors.push('Wrong header format');
       }
+    }
+
+    if (errors.length > 0) {
+      showAlert('error', {
+        id: `${clusterName}-${topicName}-createTopicMessageError`,
+        title: 'Validation Error',
+        message: (
+          <ul>
+            {errors.map((e) => (
+              <li key={e}>{e}</li>
+            ))}
+          </ul>
+        ),
+      });
+      return;
+    }
+    try {
+      await sendMessage.mutateAsync({
+        key: key || null,
+        content: content || null,
+        headers: parsedHeaders,
+        partition: partition || 0,
+        keySerde,
+        valueSerde,
+      });
+      if (!keepContents) {
+        setValue('key', defaultValues.key || '');
+        setValue('content', defaultValues.content || '');
+        closeSidebar();
+      }
+    } catch (e) {
+      // do nothing
     }
   };
 
-  if (!schemaIsReady) {
-    return <PageLoader />;
-  }
   return (
-    <div className="box">
-      <form onSubmit={handleSubmit(onSubmit)}>
-        <div className="columns">
-          <div className="column is-one-third">
-            <label className="label" htmlFor="select">
-              Partition
-            </label>
-            <div className="select is-block">
-              <select
-                id="select"
-                defaultValue={partitions[0].partition}
-                disabled={isSubmitting || messageIsSending}
-                {...register('partition')}
-              >
-                {partitions.map((partition) => (
-                  <option key={partition.partition} value={partition.partition}>
-                    {partition.partition}
-                  </option>
-                ))}
-              </select>
-            </div>
+    <S.Wrapper>
+      <form onSubmit={handleSubmit(submit)}>
+        <S.Columns>
+          <S.FlexItem>
+            <InputLabel>Partition</InputLabel>
+            <Controller
+              control={control}
+              name="partition"
+              render={({ field: { name, onChange, value } }) => (
+                <Select
+                  id="selectPartitionOptions"
+                  aria-labelledby="selectPartitionOptions"
+                  name={name}
+                  onChange={onChange}
+                  minWidth="100%"
+                  options={partitionOptions}
+                  value={value}
+                />
+              )}
+            />
+          </S.FlexItem>
+          <S.Flex>
+            <S.FlexItem>
+              <InputLabel>Key Serde</InputLabel>
+              <Controller
+                control={control}
+                name="keySerde"
+                render={({ field: { name, onChange, value } }) => (
+                  <Select
+                    id="selectKeySerdeOptions"
+                    aria-labelledby="selectKeySerdeOptions"
+                    name={name}
+                    onChange={onChange}
+                    minWidth="100%"
+                    options={getSerdeOptions(serdes.key || [])}
+                    value={value}
+                  />
+                )}
+              />
+            </S.FlexItem>
+            <S.FlexItem>
+              <InputLabel>Value Serde</InputLabel>
+              <Controller
+                control={control}
+                name="valueSerde"
+                render={({ field: { name, onChange, value } }) => (
+                  <Select
+                    id="selectValueSerdeOptions"
+                    aria-labelledby="selectValueSerdeOptions"
+                    name={name}
+                    onChange={onChange}
+                    minWidth="100%"
+                    options={getSerdeOptions(serdes.value || [])}
+                    value={value}
+                  />
+                )}
+              />
+            </S.FlexItem>
+          </S.Flex>
+          <div>
+            <Controller
+              control={control}
+              name="keepContents"
+              render={({ field: { name, onChange, value } }) => (
+                <Switch name={name} onChange={onChange} checked={value} />
+              )}
+            />
+            <InputLabel>Keep contents</InputLabel>
           </div>
-        </div>
-
-        <div className="columns">
-          <div className="column is-one-half">
-            <label className="label">Key</label>
+        </S.Columns>
+        <S.Columns>
+          <div>
+            <InputLabel>Key</InputLabel>
             <Controller
               control={control}
               name="key"
-              render={({ field: { name, onChange } }) => (
-                <JSONEditor
-                  readOnly={isSubmitting || messageIsSending}
-                  defaultValue={keyExampleValue}
+              render={({ field: { name, onChange, value } }) => (
+                <Editor
+                  readOnly={isSubmitting}
                   name={name}
                   onChange={onChange}
+                  value={value}
+                  height="40px"
                 />
               )}
             />
           </div>
-          <div className="column is-one-half">
-            <label className="label">Content</label>
+          <div>
+            <InputLabel>Value</InputLabel>
             <Controller
               control={control}
               name="content"
-              render={({ field: { name, onChange } }) => (
-                <JSONEditor
-                  readOnly={isSubmitting || messageIsSending}
-                  defaultValue={contentExampleValue}
+              render={({ field: { name, onChange, value } }) => (
+                <Editor
+                  readOnly={isSubmitting}
                   name={name}
                   onChange={onChange}
+                  value={value}
+                  height="280px"
                 />
               )}
             />
           </div>
-        </div>
-        <div className="columns">
-          <div className="column">
-            <label className="label">Headers</label>
+        </S.Columns>
+        <S.Columns>
+          <div>
+            <InputLabel>Headers</InputLabel>
             <Controller
               control={control}
               name="headers"
               render={({ field: { name, onChange } }) => (
-                <JSONEditor
-                  readOnly={isSubmitting || messageIsSending}
+                <Editor
+                  readOnly={isSubmitting}
                   defaultValue="{}"
                   name={name}
                   onChange={onChange}
-                  height="200px"
+                  height="40px"
                 />
               )}
             />
           </div>
-        </div>
-        {schemaErrors && (
-          <div className="mb-4">
-            {schemaErrors.map((err) => (
-              <p className="help is-danger" key={err}>
-                {err}
-              </p>
-            ))}
-          </div>
-        )}
-        <button
+        </S.Columns>
+        <Button
+          buttonSize="M"
+          buttonType="primary"
           type="submit"
-          className="button is-primary"
-          disabled={!isDirty || isSubmitting || messageIsSending}
+          disabled={isSubmitting}
         >
-          Send
-        </button>
+          Produce Message
+        </Button>
       </form>
-    </div>
+    </S.Wrapper>
   );
 };
 

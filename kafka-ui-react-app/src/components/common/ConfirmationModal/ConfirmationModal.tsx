@@ -1,68 +1,41 @@
 import React from 'react';
+import { Button } from 'components/common/Button/Button';
+import { ConfirmContext } from 'components/contexts/ConfirmContext';
 
-export interface ConfirmationModalProps {
-  isOpen?: boolean;
-  title?: React.ReactNode;
-  onConfirm(): void;
-  onCancel(): void;
-  isConfirming?: boolean;
-}
+import * as S from './ConfirmationModal.styled';
 
-const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
-  isOpen,
-  children,
-  title,
-  onCancel,
-  onConfirm,
-  isConfirming = false,
-}) => {
+const ConfirmationModal: React.FC = () => {
+  const context = React.useContext(ConfirmContext);
+  const isOpen = context?.content && context?.confirm;
+
   if (!isOpen) return null;
 
-  const cancelHandler = React.useCallback(() => {
-    if (!isConfirming) {
-      onCancel();
-    }
-  }, [isConfirming, onCancel]);
-
   return (
-    <div className="modal is-active">
-      <div
-        className="modal-background"
-        onClick={cancelHandler}
-        aria-hidden="true"
-      />
-      <div className="modal-card">
-        <header className="modal-card-head">
-          <p className="modal-card-title">{title || 'Confirm the action'}</p>
-          <button
-            onClick={cancelHandler}
+    <S.Wrapper role="dialog" aria-label="Confirmation Dialog">
+      <S.Overlay onClick={context.cancel} aria-hidden="true" role="button" />
+      <S.Modal>
+        <S.Header>Confirm the action</S.Header>
+        <S.Content>{context.content}</S.Content>
+        <S.Footer>
+          <Button
+            buttonType="secondary"
+            buttonSize="M"
+            onClick={context.cancel}
             type="button"
-            className="delete"
-            aria-label="close"
-            disabled={isConfirming}
-          />
-        </header>
-        <section className="modal-card-body">{children}</section>
-        <footer className="modal-card-foot is-justify-content-flex-end">
-          <button
-            onClick={onConfirm}
-            type="button"
-            className="button is-danger"
-            disabled={isConfirming}
-          >
-            Confirm
-          </button>
-          <button
-            onClick={cancelHandler}
-            type="button"
-            className="button"
-            disabled={isConfirming}
           >
             Cancel
-          </button>
-        </footer>
-      </div>
-    </div>
+          </Button>
+          <Button
+            buttonType={context.dangerButton ? 'danger' : 'primary'}
+            buttonSize="M"
+            onClick={context.confirm}
+            type="button"
+          >
+            Confirm
+          </Button>
+        </S.Footer>
+      </S.Modal>
+    </S.Wrapper>
   );
 };
 

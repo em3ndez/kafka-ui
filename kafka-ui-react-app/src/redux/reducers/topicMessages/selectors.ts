@@ -1,4 +1,4 @@
-import { createSelector } from 'reselect';
+import { createSelector } from '@reduxjs/toolkit';
 import { RootState, TopicMessagesState } from 'redux/interfaces';
 
 const topicMessagesState = ({ topicMessages }: RootState): TopicMessagesState =>
@@ -22,4 +22,9 @@ export const getTopicMessgesMeta = createSelector(
 export const getIsTopicMessagesFetching = createSelector(
   topicMessagesState,
   ({ isFetching }) => isFetching
+);
+
+export const getIsTopicMessagesType = createSelector(
+  topicMessagesState,
+  ({ messageEventType }) => messageEventType
 );

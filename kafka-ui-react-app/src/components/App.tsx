@@ -1,125 +1,99 @@
-import React from 'react';
-import cx from 'classnames';
-import { Cluster } from 'generated-sources';
-import { Switch, Route, useLocation } from 'react-router-dom';
-import { GIT_TAG, GIT_COMMIT } from 'lib/constants';
-import { Alerts } from 'redux/interfaces';
-import Nav from 'components/Nav/Nav';
+import React, { Suspense, useContext } from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import {
+  accessErrorPage,
+  clusterPath,
+  errorPage,
+  getNonExactPath,
+  clusterNewConfigPath,
+} from 'lib/paths';
 import PageLoader from 'components/common/PageLoader/PageLoader';
 import Dashboard from 'components/Dashboard/Dashboard';
-import ClusterPage from 'components/Cluster/Cluster';
-import Version from 'components/Version/Version';
-import Alert from 'components/Alert/Alert';
-import 'components/App.scss';
+import ClusterPage from 'components/ClusterPage/ClusterPage';
+import { ThemeProvider } from 'styled-components';
+import { theme, darkTheme } from 'theme/theme';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { showServerError } from 'lib/errorHandling';
+import { Toaster } from 'react-hot-toast';
+import GlobalCSS from 'components/globalCss';
+import * as S from 'components/App.styled';
+import ClusterConfigForm from 'widgets/ClusterConfigForm';
+import { ThemeModeContext } from 'components/contexts/ThemeModeContext';
 
-export interface AppProps {
-  isClusterListFetched?: boolean;
-  alerts: Alerts;
-  clusters: Cluster[];
-  fetchClustersList: () => void;
-}
+import ConfirmationModal from './common/ConfirmationModal/ConfirmationModal';
+import { ConfirmContextProvider } from './contexts/ConfirmContext';
+import { GlobalSettingsProvider } from './contexts/GlobalSettingsContext';
+import ErrorPage from './ErrorPage/ErrorPage';
+import { UserInfoRolesAccessProvider } from './contexts/UserInfoRolesAccessContext';
+import PageContainer from './PageContainer/PageContainer';
 
-const App: React.FC<AppProps> = ({
-  isClusterListFetched,
-  alerts,
-  clusters,
-  fetchClustersList,
-}) => {
-  const [isSidebarVisible, setIsSidebarVisible] = React.useState(false);
-
-  const onBurgerClick = React.useCallback(
-    () => setIsSidebarVisible(!isSidebarVisible),
-    [isSidebarVisible]
-  );
-
-  const closeSidebar = React.useCallback(() => setIsSidebarVisible(false), []);
-
-  const location = useLocation();
-
-  React.useEffect(() => {
-    closeSidebar();
-  }, [location]);
-
-  React.useEffect(() => {
-    fetchClustersList();
-  }, [fetchClustersList]);
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      suspense: true,
+      networkMode: 'offlineFirst',
+      onError(error) {
+        showServerError(error as Response);
+      },
+    },
+    mutations: {
+      onError(error) {
+        showServerError(error as Response);
+      },
+    },
+  },
+});
+const App: React.FC = () => {
+  const { isDarkMode } = useContext(ThemeModeContext);
 
   return (
-    <div
-      className={cx('Layout', { 'Layout--sidebarVisible': isSidebarVisible })}
-    >
-      <nav
-        className="navbar is-fixed-top is-white Layout__header"
-        role="navigation"
-        aria-label="main navigation"
-      >
-        <div className="navbar-brand">
-          <div
-            className={cx('navbar-burger', 'ml-0', {
-              'is-active': isSidebarVisible,
-            })}
-            onClick={onBurgerClick}
-            onKeyDown={onBurgerClick}
-            role="button"
-            tabIndex={0}
-          >
-            <span />
-            <span />
-            <span />
-          </div>
-
-          <a className="navbar-item title is-5 is-marginless" href="/ui">
-            UI for Apache Kafka
-          </a>
-
-          <div className="navbar-item">
-            <Version tag={GIT_TAG} commit={GIT_COMMIT} />
-          </div>
-        </div>
-      </nav>
-
-      <main className="Layout__container">
-        <div className="Layout__sidebar has-shadow has-background-white">
-          <Nav
-            clusters={clusters}
-            isClusterListFetched={isClusterListFetched}
-          />
-        </div>
-        <div
-          className="Layout__sidebarOverlay is-overlay"
-          onClick={closeSidebar}
-          onKeyDown={closeSidebar}
-          tabIndex={-1}
-          aria-hidden="true"
-        />
-        {isClusterListFetched ? (
-          <Switch>
-            <Route
-              exact
-              path={['/', '/ui', '/ui/clusters']}
-              component={Dashboard}
-            />
-            <Route path="/ui/clusters/:clusterName" component={ClusterPage} />
-          </Switch>
-        ) : (
-          <PageLoader fullHeight />
-        )}
-      </main>
-
-      <div className="Layout__alerts">
-        {alerts.map(({ id, type, title, message, response, createdAt }) => (
-          <Alert
-            key={id}
-            id={id}
-            type={type}
-            title={title}
-            message={message}
-            response={response}
-            createdAt={createdAt}
-          />
-        ))}
-      </div>
-    </div>
+    <QueryClientProvider client={queryClient}>
+      <GlobalSettingsProvider>
+        <ThemeProvider theme={isDarkMode ? darkTheme : theme}>
+          <Suspense fallback={<PageLoader />}>
+            <UserInfoRolesAccessProvider>
+              <ConfirmContextProvider>
+                <GlobalCSS />
+                <S.Layout>
+                  <PageContainer>
+                    <Routes>
+                      {['/', '/ui', '/ui/clusters'].map((path) => (
+                        <Route
+                          key="Home" // optional: avoid full re-renders on route changes
+                          path={path}
+                          element={<Dashboard />}
+                        />
+                      ))}
+                      <Route
+                        path={getNonExactPath(clusterNewConfigPath)}
+                        element={<ClusterConfigForm />}
+                      />
+                      <Route
+                        path={getNonExactPath(clusterPath())}
+                        element={<ClusterPage />}
+                      />
+                      <Route
+                        path={accessErrorPage}
+                        element={
+                          <ErrorPage status={403} text="Access is Denied" />
+                        }
+                      />
+                      <Route path={errorPage} element={<ErrorPage />} />
+                      <Route
+                        path="*"
+                        element={<Navigate to={errorPage} replace />}
+                      />
+                    </Routes>
+                  </PageContainer>
+                  <Toaster position="bottom-right" />
+                </S.Layout>
+                <ConfirmationModal />
+              </ConfirmContextProvider>
+            </UserInfoRolesAccessProvider>
+          </Suspense>
+        </ThemeProvider>
+      </GlobalSettingsProvider>
+    </QueryClientProvider>
   );
 };
 

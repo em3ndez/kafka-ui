@@ -1,10 +1,18 @@
-import { ConsumerGroup, ConsumerGroupDetails } from 'generated-sources';
+import {
+  ConsumerGroup,
+  ConsumerGroupOffsetsResetType,
+} from 'generated-sources';
 
-export type ConsumerGroupID = ConsumerGroup['groupId'];
+import { ClusterName } from './cluster';
 
-export type ConsumerGroupDetailedInfo = ConsumerGroupDetails;
-
-export interface ConsumerGroupsState {
-  byID: { [consumerGroupID: string]: ConsumerGroupDetailedInfo };
-  allIDs: ConsumerGroupID[];
+export interface ConsumerGroupResetOffsetRequestParams {
+  clusterName: ClusterName;
+  consumerGroupID: ConsumerGroup['groupId'];
+  requestBody: {
+    topic: string;
+    resetType: ConsumerGroupOffsetsResetType;
+    partitionsOffsets?: { offset: string; partition: number }[];
+    resetToTimestamp?: Date;
+    partitions: number[];
+  };
 }

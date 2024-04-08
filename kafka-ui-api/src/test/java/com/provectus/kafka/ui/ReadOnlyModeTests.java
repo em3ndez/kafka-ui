@@ -1,21 +1,15 @@
 package com.provectus.kafka.ui;
 
-import com.provectus.kafka.ui.model.TopicCreation;
-import com.provectus.kafka.ui.model.TopicUpdate;
+import com.provectus.kafka.ui.model.TopicCreationDTO;
+import com.provectus.kafka.ui.model.TopicUpdateDTO;
 import java.util.Map;
 import java.util.UUID;
-import lombok.extern.log4j.Log4j2;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
 import org.springframework.http.HttpStatus;
-import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
-@ContextConfiguration(initializers = {AbstractBaseTest.Initializer.class})
-@Log4j2
-@AutoConfigureWebTestClient(timeout = "60000")
-public class ReadOnlyModeTests extends AbstractBaseTest {
+public class ReadOnlyModeTests extends AbstractIntegrationTest {
 
   @Autowired
   private WebTestClient webTestClient;
@@ -25,7 +19,7 @@ public class ReadOnlyModeTests extends AbstractBaseTest {
     var topicName = UUID.randomUUID().toString();
     webTestClient.post()
         .uri("/api/clusters/{clusterName}/topics", LOCAL)
-        .bodyValue(new TopicCreation()
+        .bodyValue(new TopicCreationDTO()
             .name(topicName)
             .partitions(1)
             .replicationFactor(1)
@@ -41,7 +35,7 @@ public class ReadOnlyModeTests extends AbstractBaseTest {
     var topicName = UUID.randomUUID().toString();
     webTestClient.post()
         .uri("/api/clusters/{clusterName}/topics", SECOND_LOCAL)
-        .bodyValue(new TopicCreation()
+        .bodyValue(new TopicCreationDTO()
             .name(topicName)
             .partitions(1)
             .replicationFactor(1)
@@ -57,23 +51,25 @@ public class ReadOnlyModeTests extends AbstractBaseTest {
     var topicName = UUID.randomUUID().toString();
     webTestClient.post()
         .uri("/api/clusters/{clusterName}/topics", LOCAL)
-        .bodyValue(new TopicCreation()
+        .bodyValue(new TopicCreationDTO()
             .name(topicName)
             .partitions(1)
             .replicationFactor(1)
-            .configs(Map.of())
         )
         .exchange()
         .expectStatus()
         .isOk();
+
     webTestClient.patch()
         .uri("/api/clusters/{clusterName}/topics/{topicName}", LOCAL, topicName)
-        .bodyValue(new TopicUpdate()
-            .configs(Map.of())
+        .bodyValue(new TopicUpdateDTO()
+            .configs(Map.of("cleanup.policy", "compact"))
         )
         .exchange()
         .expectStatus()
-        .isOk();
+        .isOk()
+        .expectBody()
+        .jsonPath("$.cleanUpPolicy").isEqualTo("COMPACT");
   }
 
   @Test
@@ -81,7 +77,7 @@ public class ReadOnlyModeTests extends AbstractBaseTest {
     var topicName = UUID.randomUUID().toString();
     webTestClient.patch()
         .uri("/api/clusters/{clusterName}/topics/{topicName}", SECOND_LOCAL, topicName)
-        .bodyValue(new TopicUpdate()
+        .bodyValue(new TopicUpdateDTO()
             .configs(Map.of())
         )
         .exchange()

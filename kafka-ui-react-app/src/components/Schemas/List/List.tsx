@@ -1,100 +1,116 @@
 import React from 'react';
 import {
-  CompatibilityLevelCompatibilityEnum,
-  SchemaSubject,
-} from 'generated-sources';
-import { Link, useParams } from 'react-router-dom';
-import { clusterSchemaNewPath } from 'lib/paths';
-import { ClusterName } from 'redux/interfaces';
-import PageLoader from 'components/common/PageLoader/PageLoader';
-import Breadcrumb from 'components/common/Breadcrumb/Breadcrumb';
+  ClusterNameRoute,
+  clusterSchemaNewRelativePath,
+  clusterSchemaPath,
+} from 'lib/paths';
 import ClusterContext from 'components/contexts/ClusterContext';
+import { ActionButton } from 'components/common/ActionComponent';
+import PageHeading from 'components/common/PageHeading/PageHeading';
+import { useAppDispatch, useAppSelector } from 'lib/hooks/redux';
+import useAppParams from 'lib/hooks/useAppParams';
+import {
+  selectAllSchemas,
+  fetchSchemas,
+  getAreSchemasFulfilled,
+  SCHEMAS_FETCH_ACTION,
+} from 'redux/reducers/schemas/schemasSlice';
+import PageLoader from 'components/common/PageLoader/PageLoader';
+import { resetLoaderById } from 'redux/reducers/loader/loaderSlice';
+import { ControlPanelWrapper } from 'components/common/ControlPanel/ControlPanel.styled';
+import Search from 'components/common/Search/Search';
+import PlusIcon from 'components/common/Icons/PlusIcon';
+import Table, { LinkCell } from 'components/common/NewTable';
+import { ColumnDef } from '@tanstack/react-table';
+import { Action, SchemaSubject, ResourceType } from 'generated-sources';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { PER_PAGE } from 'lib/constants';
 
-import ListItem from './ListItem';
-import GlobalSchemaSelector from './GlobalSchemaSelector';
+import GlobalSchemaSelector from './GlobalSchemaSelector/GlobalSchemaSelector';
 
-export interface ListProps {
-  schemas: SchemaSubject[];
-  isFetching: boolean;
-  isGlobalSchemaCompatibilityLevelFetched: boolean;
-  globalSchemaCompatibilityLevel?: CompatibilityLevelCompatibilityEnum;
-  fetchSchemasByClusterName: (clusterName: ClusterName) => void;
-  fetchGlobalSchemaCompatibilityLevel: (
-    clusterName: ClusterName
-  ) => Promise<void>;
-  updateGlobalSchemaCompatibilityLevel: (
-    clusterName: ClusterName,
-    compatibilityLevel: CompatibilityLevelCompatibilityEnum
-  ) => Promise<void>;
-}
-
-const List: React.FC<ListProps> = ({
-  schemas,
-  isFetching,
-  globalSchemaCompatibilityLevel,
-  isGlobalSchemaCompatibilityLevelFetched,
-  fetchSchemasByClusterName,
-  fetchGlobalSchemaCompatibilityLevel,
-  updateGlobalSchemaCompatibilityLevel,
-}) => {
+const List: React.FC = () => {
+  const dispatch = useAppDispatch();
   const { isReadOnly } = React.useContext(ClusterContext);
-  const { clusterName } = useParams<{ clusterName: string }>();
+  const { clusterName } = useAppParams<ClusterNameRoute>();
+  const navigate = useNavigate();
+  const schemas = useAppSelector(selectAllSchemas);
+  const isFetched = useAppSelector(getAreSchemasFulfilled);
+  const totalPages = useAppSelector((state) => state.schemas.totalPages);
+  const [searchParams] = useSearchParams();
 
   React.useEffect(() => {
-    fetchSchemasByClusterName(clusterName);
-    fetchGlobalSchemaCompatibilityLevel(clusterName);
-  }, [fetchSchemasByClusterName, clusterName]);
+    dispatch(
+      fetchSchemas({
+        clusterName,
+        page: Number(searchParams.get('page') || 1),
+        perPage: Number(searchParams.get('perPage') || PER_PAGE),
+        search: searchParams.get('q') || '',
+      })
+    );
+    return () => {
+      dispatch(resetLoaderById(SCHEMAS_FETCH_ACTION));
+    };
+  }, [clusterName, dispatch, searchParams]);
+
+  const columns = React.useMemo<ColumnDef<SchemaSubject>[]>(
+    () => [
+      {
+        header: 'Subject',
+        accessorKey: 'subject',
+        // eslint-disable-next-line react/no-unstable-nested-components
+        cell: ({ getValue }) => (
+          <LinkCell
+            value={`${getValue<string | number>()}`}
+            to={encodeURIComponent(`${getValue<string | number>()}`)}
+          />
+        ),
+      },
+      { header: 'Id', accessorKey: 'id' },
+      { header: 'Type', accessorKey: 'schemaType' },
+      { header: 'Version', accessorKey: 'version' },
+      { header: 'Compatibility', accessorKey: 'compatibilityLevel' },
+    ],
+    []
+  );
 
   return (
-    <div className="section">
-      <Breadcrumb>Schema Registry</Breadcrumb>
-      <div className="box">
-        <div className="level">
-          {!isReadOnly && isGlobalSchemaCompatibilityLevelFetched && (
-            <div className="level-item level-right">
-              <GlobalSchemaSelector
-                globalSchemaCompatibilityLevel={globalSchemaCompatibilityLevel}
-                updateGlobalSchemaCompatibilityLevel={
-                  updateGlobalSchemaCompatibilityLevel
-                }
-              />
-              <Link
-                className="button is-primary"
-                to={clusterSchemaNewPath(clusterName)}
-              >
-                Create Schema
-              </Link>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {isFetching ? (
-        <PageLoader />
+    <>
+      <PageHeading text="Schema Registry">
+        {!isReadOnly && (
+          <>
+            <GlobalSchemaSelector />
+            <ActionButton
+              buttonSize="M"
+              buttonType="primary"
+              to={clusterSchemaNewRelativePath}
+              permission={{
+                resource: ResourceType.SCHEMA,
+                action: Action.CREATE,
+              }}
+            >
+              <PlusIcon /> Create Schema
+            </ActionButton>
+          </>
+        )}
+      </PageHeading>
+      <ControlPanelWrapper hasInput>
+        <Search placeholder="Search by Schema Name" />
+      </ControlPanelWrapper>
+      {isFetched ? (
+        <Table
+          columns={columns}
+          data={schemas}
+          pageCount={totalPages}
+          emptyMessage="No schemas found"
+          onRowClick={(row) =>
+            navigate(clusterSchemaPath(clusterName, row.original.subject))
+          }
+          serverSideProcessing
+        />
       ) : (
-        <div className="box">
-          <table className="table is-striped is-fullwidth">
-            <thead>
-              <tr>
-                <th>Schema Name</th>
-                <th>Version</th>
-                <th>Compatibility</th>
-              </tr>
-            </thead>
-            <tbody>
-              {schemas.length === 0 && (
-                <tr>
-                  <td colSpan={10}>No schemas found</td>
-                </tr>
-              )}
-              {schemas.map((subject) => (
-                <ListItem key={subject.id} subject={subject} />
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <PageLoader />
       )}
-    </div>
+    </>
   );
 };
 

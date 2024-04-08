@@ -1,35 +1,64 @@
-import { shallow } from 'enzyme';
 import Search from 'components/common/Search/Search';
 import React from 'react';
+import { render } from 'lib/testHelpers';
+import userEvent from '@testing-library/user-event';
+import { screen } from '@testing-library/react';
+import { useSearchParams } from 'react-router-dom';
 
 jest.mock('use-debounce', () => ({
   useDebouncedCallback: (fn: (e: Event) => void) => fn,
 }));
 
+const setSearchParamsMock = jest.fn();
+jest.mock('react-router-dom', () => ({
+  ...(jest.requireActual('react-router-dom') as object),
+  useSearchParams: jest.fn(),
+}));
+
+const placeholder = 'I am a search placeholder';
+
 describe('Search', () => {
-  const handleSearch = jest.fn();
-  let component = shallow(
-    <Search
-      handleSearch={handleSearch}
-      value=""
-      placeholder="Search bt the Topic name"
-    />
-  );
-  it('calls handleSearch on input', () => {
-    component.find('input').simulate('change', { target: { value: 'test' } });
-    expect(handleSearch).toHaveBeenCalledTimes(1);
+  beforeEach(() => {
+    (useSearchParams as jest.Mock).mockImplementation(() => [
+      new URLSearchParams(),
+      setSearchParamsMock,
+    ]);
+  });
+  it('calls handleSearch on input', async () => {
+    render(<Search placeholder={placeholder} />);
+    const input = screen.getByPlaceholderText(placeholder);
+    await userEvent.click(input);
+    await userEvent.keyboard('value');
+    expect(setSearchParamsMock).toHaveBeenCalledTimes(5);
   });
 
-  describe('when placeholder is provided', () => {
-    it('matches the snapshot', () => {
-      expect(component).toMatchSnapshot();
-    });
+  it('when placeholder is provided', () => {
+    render(<Search placeholder={placeholder} />);
+    expect(screen.getByPlaceholderText(placeholder)).toBeInTheDocument();
   });
 
-  describe('when placeholder is not provided', () => {
-    component = shallow(<Search handleSearch={handleSearch} value="" />);
-    it('matches the snapshot', () => {
-      expect(component).toMatchSnapshot();
-    });
+  it('when placeholder is not provided', () => {
+    render(<Search />);
+    expect(screen.queryByPlaceholderText('Search')).toBeInTheDocument();
+  });
+
+  it('Clear button is visible', () => {
+    render(<Search placeholder={placeholder} />);
+
+    const clearButton = screen.getByRole('button');
+    expect(clearButton).toBeInTheDocument();
+  });
+
+  it('Clear button should clear text from input', async () => {
+    render(<Search placeholder={placeholder} />);
+
+    const searchField = screen.getAllByRole('textbox')[0];
+    await userEvent.type(searchField, 'some text');
+    expect(searchField).toHaveValue('some text');
+
+    const clearButton = screen.getByRole('button');
+    await userEvent.click(clearButton);
+
+    expect(searchField).toHaveValue('');
   });
 });

@@ -1,57 +1,54 @@
 import React from 'react';
-import { Connector } from 'generated-sources';
-import ConnectorStatusTag from 'components/Connect/ConnectorStatusTag';
+import * as C from 'components/common/Tag/Tag.styled';
+import * as Metrics from 'components/common/Metrics';
+import getTagColor from 'components/common/Tag/getTagColor';
+import { RouterParamsClusterConnectConnector } from 'lib/paths';
+import useAppParams from 'lib/hooks/useAppParams';
+import { useConnector, useConnectorTasks } from 'lib/hooks/api/kafkaConnect';
 
-export interface OverviewProps {
-  connector: Connector | null;
-  runningTasksCount: number;
-  failedTasksCount: number;
-}
+import getTaskMetrics from './getTaskMetrics';
 
-const Overview: React.FC<OverviewProps> = ({
-  connector,
-  runningTasksCount,
-  failedTasksCount,
-}) => {
-  if (!connector) return null;
+const Overview: React.FC = () => {
+  const routerProps = useAppParams<RouterParamsClusterConnectConnector>();
+
+  const { data: connector } = useConnector(routerProps);
+  const { data: tasks } = useConnectorTasks(routerProps);
+
+  if (!connector) {
+    return null;
+  }
+
+  const { running, failed } = getTaskMetrics(tasks);
 
   return (
-    <div className="tile is-6">
-      <table className="table is-fullwidth">
-        <tbody>
-          {connector.status?.workerId && (
-            <tr>
-              <th>Worker</th>
-              <td>{connector.status.workerId}</td>
-            </tr>
-          )}
-          <tr>
-            <th>Type</th>
-            <td>{connector.type}</td>
-          </tr>
-          {connector.config['connector.class'] && (
-            <tr>
-              <th>Class</th>
-              <td>{connector.config['connector.class']}</td>
-            </tr>
-          )}
-          <tr>
-            <th>State</th>
-            <td>
-              <ConnectorStatusTag status={connector.status.state} />
-            </td>
-          </tr>
-          <tr>
-            <th>Tasks Running</th>
-            <td>{runningTasksCount}</td>
-          </tr>
-          <tr>
-            <th>Tasks Failed</th>
-            <td>{failedTasksCount}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <Metrics.Wrapper>
+      <Metrics.Section>
+        {connector.status?.workerId && (
+          <Metrics.Indicator label="Worker">
+            {connector.status.workerId}
+          </Metrics.Indicator>
+        )}
+        <Metrics.Indicator label="Type">{connector.type}</Metrics.Indicator>
+        {connector.config['connector.class'] && (
+          <Metrics.Indicator label="Class">
+            {connector.config['connector.class']}
+          </Metrics.Indicator>
+        )}
+        <Metrics.Indicator label="State">
+          <C.Tag color={getTagColor(connector.status.state)}>
+            {connector.status.state}
+          </C.Tag>
+        </Metrics.Indicator>
+        <Metrics.Indicator label="Tasks Running">{running}</Metrics.Indicator>
+        <Metrics.Indicator
+          label="Tasks Failed"
+          isAlert
+          alertType={failed > 0 ? 'error' : 'success'}
+        >
+          {failed}
+        </Metrics.Indicator>
+      </Metrics.Section>
+    </Metrics.Wrapper>
   );
 };
 

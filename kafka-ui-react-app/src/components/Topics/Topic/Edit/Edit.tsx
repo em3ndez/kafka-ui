@@ -1,149 +1,104 @@
 import React from 'react';
-import {
-  ClusterName,
-  TopicFormDataRaw,
-  TopicName,
-  TopicConfigByName,
-  TopicWithDetailedInfo,
-  TopicFormData,
-} from 'redux/interfaces';
-import { TopicConfig } from 'generated-sources';
+import { TopicConfigByName, TopicFormData } from 'redux/interfaces';
 import { useForm, FormProvider } from 'react-hook-form';
-import { camelCase } from 'lodash';
 import TopicForm from 'components/Topics/shared/Form/TopicForm';
-import { clusterTopicPath } from 'lib/paths';
-import { useHistory } from 'react-router';
+import { RouteParamsClusterTopic } from 'lib/paths';
+import { useNavigate } from 'react-router-dom';
+import { yupResolver } from '@hookform/resolvers/yup';
+import { topicFormValidationSchema } from 'lib/yupExtended';
+import useAppParams from 'lib/hooks/useAppParams';
+import topicParamsTransformer from 'components/Topics/Topic/Edit/topicParamsTransformer';
+import { MILLISECONDS_IN_WEEK } from 'lib/constants';
+import {
+  useTopicConfig,
+  useTopicDetails,
+  useUpdateTopic,
+} from 'lib/hooks/api/topics';
+import DangerZone from 'components/Topics/Topic/Edit/DangerZone/DangerZone';
+import { ConfigSource } from 'generated-sources';
 
-import DangerZoneContainer from './DangerZoneContainer';
-
-interface Props {
-  clusterName: ClusterName;
-  topicName: TopicName;
-  topic?: TopicWithDetailedInfo;
-  isFetched: boolean;
-  isTopicUpdated: boolean;
-  fetchTopicConfig: (clusterName: ClusterName, topicName: TopicName) => void;
-  updateTopic: (
-    clusterName: ClusterName,
-    topicName: TopicName,
-    form: TopicFormDataRaw
-  ) => void;
-  updateTopicPartitionsCount: (
-    clusterName: string,
-    topicname: string,
-    partitions: number
-  ) => void;
-}
-
-const DEFAULTS = {
+export const TOPIC_EDIT_FORM_DEFAULT_PROPS = {
   partitions: 1,
   replicationFactor: 1,
   minInSyncReplicas: 1,
   cleanupPolicy: 'delete',
   retentionBytes: -1,
+  retentionMs: MILLISECONDS_IN_WEEK,
   maxMessageBytes: 1000012,
+  customParams: [],
 };
 
-const topicParams = (topic: TopicWithDetailedInfo | undefined) => {
-  if (!topic) {
-    return DEFAULTS;
-  }
+const Edit: React.FC = () => {
+  const { clusterName, topicName } = useAppParams<RouteParamsClusterTopic>();
+  const { data: topic } = useTopicDetails({ clusterName, topicName });
+  const { data: topicConfig } = useTopicConfig({ clusterName, topicName });
+  const updateTopic = useUpdateTopic({ clusterName, topicName });
 
-  const { name, replicationFactor } = topic;
+  const defaultValues = topicParamsTransformer(topic, topicConfig);
 
-  const configs = topic.config?.reduce(
-    (result: { [key: string]: TopicConfig['value'] }, param) => ({
-      ...result,
-      [camelCase(param.name)]: param.value || param.defaultValue,
-    }),
-    {}
-  );
+  const methods = useForm<TopicFormData>({
+    defaultValues,
+    resolver: yupResolver(topicFormValidationSchema),
+    mode: 'onChange',
+  });
 
-  return {
-    ...DEFAULTS,
-    name,
-    partitions: topic.partitionCount || DEFAULTS.partitions,
-    replicationFactor,
-    customParams: topic.config
-      ?.filter((el) => el.value !== el.defaultValue)
-      .map((el) => ({ name: el.name, value: el.value })),
-    ...configs,
-  };
-};
-
-let formInit = false;
-
-const Edit: React.FC<Props> = ({
-  clusterName,
-  topicName,
-  topic,
-  isFetched,
-  isTopicUpdated,
-  fetchTopicConfig,
-  updateTopic,
-}) => {
-  const defaultValues = topicParams(topic);
-
-  const methods = useForm<TopicFormData>({ defaultValues });
-
-  const [isSubmitting, setIsSubmitting] = React.useState<boolean>(false);
-  const history = useHistory();
-
-  React.useEffect(() => {
-    fetchTopicConfig(clusterName, topicName);
-  }, [fetchTopicConfig, clusterName, topicName]);
-
-  React.useEffect(() => {
-    if (isSubmitting && isTopicUpdated) {
-      const { name } = methods.getValues();
-      history.push(clusterTopicPath(clusterName, name));
-    }
-  }, [isSubmitting, isTopicUpdated, clusterTopicPath, clusterName, methods]);
-
-  if (!isFetched || !topic || !topic.config) {
-    return null;
-  }
-
-  if (!formInit) {
-    methods.reset(defaultValues);
-    formInit = true;
-  }
+  const navigate = useNavigate();
 
   const config: TopicConfigByName = {
     byName: {},
   };
 
-  topic.config.forEach((param) => {
+  topicConfig?.forEach((param) => {
     config.byName[param.name] = param;
   });
+  const onSubmit = async (data: TopicFormData) => {
+    const filteredDirtyDefaultEntries = Object.entries(data).filter(
+      ([key, val]) => {
+        const isDirty =
+          String(val) !==
+          String(defaultValues[key as keyof typeof defaultValues]);
 
-  const onSubmit = async (data: TopicFormDataRaw) => {
-    updateTopic(clusterName, topicName, data);
-    setIsSubmitting(true); // Keep this action after updateTopic to prevent redirect before update.
+        const isDefaultConfig =
+          config.byName[key]?.source === ConfigSource.DEFAULT_CONFIG;
+
+        // if it is changed should be sent or if it was Dynamic
+        return isDirty || !isDefaultConfig;
+      }
+    );
+
+    const newData = Object.fromEntries(filteredDirtyDefaultEntries);
+    try {
+      await updateTopic.mutateAsync(newData);
+      navigate('../');
+    } catch (e) {
+      // do nothing
+    }
   };
 
   return (
-    <div>
-      <div className="box">
-        <FormProvider {...methods}>
-          <TopicForm
-            topicName={topicName}
-            config={config}
-            isSubmitting={isSubmitting}
-            isEditing
-            onSubmit={methods.handleSubmit(onSubmit)}
-          />
-        </FormProvider>
-      </div>
+    <>
+      <FormProvider {...methods}>
+        <TopicForm
+          config={config.byName}
+          topicName={topicName}
+          retentionBytes={defaultValues.retentionBytes}
+          inSyncReplicas={Number(defaultValues.minInSyncReplicas)}
+          isSubmitting={updateTopic.isLoading}
+          cleanUpPolicy={topic?.cleanUpPolicy}
+          isEditing
+          onSubmit={methods.handleSubmit(onSubmit)}
+        />
+      </FormProvider>
       {topic && (
-        <DangerZoneContainer
+        <DangerZone
           defaultPartitions={defaultValues.partitions}
           defaultReplicationFactor={
-            defaultValues.replicationFactor || DEFAULTS.replicationFactor
+            defaultValues.replicationFactor ||
+            TOPIC_EDIT_FORM_DEFAULT_PROPS.replicationFactor
           }
         />
       )}
-    </div>
+    </>
   );
 };
 

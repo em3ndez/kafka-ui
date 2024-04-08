@@ -1,38 +1,28 @@
+import { useClusters } from 'lib/hooks/api/clusters';
 import React from 'react';
-import { NavLink } from 'react-router-dom';
-import cx from 'classnames';
-import { Cluster } from 'generated-sources';
 
 import ClusterMenu from './ClusterMenu';
+import ClusterMenuItem from './ClusterMenuItem';
+import * as S from './Nav.styled';
 
-interface Props {
-  isClusterListFetched?: boolean;
-  clusters: Cluster[];
-  className?: string;
-}
+const Nav: React.FC = () => {
+  const clusters = useClusters();
 
-const Nav: React.FC<Props> = ({
-  isClusterListFetched,
-  clusters,
-  className,
-}) => (
-  <aside className={cx('menu has-shadow has-background-white', className)}>
-    <p className="menu-label">General</p>
-    <ul className="menu-list">
-      <li>
-        <NavLink exact to="/ui" activeClassName="is-active" title="Dashboard">
-          Dashboard
-        </NavLink>
-      </li>
-    </ul>
-    <p className="menu-label">Clusters</p>
-    {!isClusterListFetched && <div className="loader" />}
-
-    {isClusterListFetched &&
-      clusters.map((cluster) => (
-        <ClusterMenu cluster={cluster} key={cluster.name} />
-      ))}
-  </aside>
-);
+  return (
+    <aside aria-label="Sidebar Menu">
+      <S.List>
+        <ClusterMenuItem to="/" title="Dashboard" isTopLevel />
+      </S.List>
+      {clusters.isSuccess &&
+        clusters.data.map((cluster) => (
+          <ClusterMenu
+            cluster={cluster}
+            key={cluster.name}
+            singleMode={clusters.data.length === 1}
+          />
+        ))}
+    </aside>
+  );
+};
 
 export default Nav;

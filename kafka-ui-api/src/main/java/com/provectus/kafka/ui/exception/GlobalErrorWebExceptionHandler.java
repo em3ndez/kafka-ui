@@ -1,7 +1,8 @@
 package com.provectus.kafka.ui.exception;
 
+import com.google.common.base.Throwables;
 import com.google.common.collect.Sets;
-import com.provectus.kafka.ui.model.ErrorResponse;
+import com.provectus.kafka.ui.model.ErrorResponseDTO;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -9,7 +10,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import org.springframework.boot.autoconfigure.web.ResourceProperties;
+import org.springframework.boot.autoconfigure.web.WebProperties;
 import org.springframework.boot.autoconfigure.web.reactive.error.AbstractErrorWebExceptionHandler;
 import org.springframework.boot.web.reactive.error.ErrorAttributes;
 import org.springframework.context.ApplicationContext;
@@ -35,10 +36,9 @@ import reactor.core.publisher.Mono;
 public class GlobalErrorWebExceptionHandler extends AbstractErrorWebExceptionHandler {
 
   public GlobalErrorWebExceptionHandler(ErrorAttributes errorAttributes,
-                                        ResourceProperties resourceProperties,
                                         ApplicationContext applicationContext,
                                         ServerCodecConfigurer codecConfigurer) {
-    super(errorAttributes, resourceProperties, applicationContext);
+    super(errorAttributes, new WebProperties.Resources(), applicationContext);
     this.setMessageWriters(codecConfigurer.getWriters());
   }
 
@@ -69,11 +69,12 @@ public class GlobalErrorWebExceptionHandler extends AbstractErrorWebExceptionHan
   }
 
   private Mono<ServerResponse> renderDefault(Throwable throwable, ServerRequest request) {
-    var response = new ErrorResponse()
+    var response = new ErrorResponseDTO()
         .code(ErrorCode.UNEXPECTED.code())
         .message(coalesce(throwable.getMessage(), "Unexpected internal error"))
         .requestId(requestId(request))
-        .timestamp(currentTimestamp());
+        .timestamp(currentTimestamp())
+        .stackTrace(Throwables.getStackTraceAsString(throwable));
     return ServerResponse
         .status(ErrorCode.UNEXPECTED.httpStatus())
         .contentType(MediaType.APPLICATION_JSON)
@@ -82,11 +83,12 @@ public class GlobalErrorWebExceptionHandler extends AbstractErrorWebExceptionHan
 
   private Mono<ServerResponse> render(CustomBaseException baseException, ServerRequest request) {
     ErrorCode errorCode = baseException.getErrorCode();
-    var response = new ErrorResponse()
+    var response = new ErrorResponseDTO()
         .code(errorCode.code())
         .message(coalesce(baseException.getMessage(), "Internal error"))
         .requestId(requestId(request))
-        .timestamp(currentTimestamp());
+        .timestamp(currentTimestamp())
+        .stackTrace(Throwables.getStackTraceAsString(baseException));
     return ServerResponse
         .status(errorCode.httpStatus())
         .contentType(MediaType.APPLICATION_JSON)
@@ -100,22 +102,23 @@ public class GlobalErrorWebExceptionHandler extends AbstractErrorWebExceptionHan
 
     var fieldsErrors = fieldErrorsMap.entrySet().stream()
         .map(e -> {
-          var err = new com.provectus.kafka.ui.model.FieldError();
+          var err = new com.provectus.kafka.ui.model.FieldErrorDTO();
           err.setFieldName(e.getKey());
           err.setRestrictions(List.copyOf(e.getValue()));
           return err;
-        }).collect(Collectors.toList());
+        }).toList();
 
     var message = fieldsErrors.isEmpty()
         ? exception.getMessage()
         : "Fields validation failure";
 
-    var response = new ErrorResponse()
+    var response = new ErrorResponseDTO()
         .code(ErrorCode.BINDING_FAIL.code())
         .message(message)
         .requestId(requestId(request))
         .timestamp(currentTimestamp())
-        .fieldsErrors(fieldsErrors);
+        .fieldsErrors(fieldsErrors)
+        .stackTrace(Throwables.getStackTraceAsString(exception));
     return ServerResponse
         .status(HttpStatus.BAD_REQUEST)
         .contentType(MediaType.APPLICATION_JSON)
@@ -124,13 +127,14 @@ public class GlobalErrorWebExceptionHandler extends AbstractErrorWebExceptionHan
 
   private Mono<ServerResponse> render(ResponseStatusException exception, ServerRequest request) {
     String msg = coalesce(exception.getReason(), exception.getMessage(), "Server error");
-    var response = new ErrorResponse()
+    var response = new ErrorResponseDTO()
         .code(ErrorCode.UNEXPECTED.code())
         .message(msg)
         .requestId(requestId(request))
-        .timestamp(currentTimestamp());
+        .timestamp(currentTimestamp())
+        .stackTrace(Throwables.getStackTraceAsString(exception));
     return ServerResponse
-        .status(exception.getStatus())
+        .status(exception.getStatusCode())
         .contentType(MediaType.APPLICATION_JSON)
         .bodyValue(response);
   }
